@@ -432,7 +432,8 @@
     const go = (n) => { if (photos.length > 1) { i = (i + n + photos.length) % photos.length; render(); } };
     const onKey = (e) => {
       if ($$('.modal-back').some((b) => b.style.zIndex)) return; // a dialog on top of the viewer is open
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape' && lb.classList.contains('zoomed')) lb.classList.remove('zoomed');
+      else if (e.key === 'Escape') close();
       else if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'ArrowRight') go(1);
     };
@@ -441,7 +442,7 @@
     let touchX = null;
     lb.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
     lb.addEventListener('touchend', (e) => {
-      if (touchX == null) return;
+      if (touchX == null || lb.classList.contains('zoomed')) return;
       const dx = e.changedTouches[0].clientX - touchX;
       touchX = null;
       if (Math.abs(dx) > 50) go(dx > 0 ? -1 : 1);
@@ -472,7 +473,19 @@
           <div class="lb-meta">${esc(meta)}</div>
         </div></div>`;
       $('[data-x]', lb).onclick = close;
-      $('.lb-stage', lb).onclick = (e) => { if (e.target.classList.contains('lb-stage')) close(); };
+      const stage = $('.lb-stage', lb);
+      stage.onclick = (e) => { if (e.target === stage && !lb.classList.contains('zoomed')) close(); };
+      // Click the photo to see it at full size (scroll to pan); click again to fit it back on screen.
+      lb.classList.remove('zoomed');
+      const photo = $('img', stage);
+      photo.onclick = (e) => {
+        const fx = e.offsetX / photo.clientWidth; // where on the photo was clicked, measured before zooming
+        const fy = e.offsetY / photo.clientHeight;
+        if (lb.classList.toggle('zoomed')) {
+          stage.scrollLeft = fx * photo.naturalWidth - stage.clientWidth / 2;
+          stage.scrollTop = fy * photo.naturalHeight - stage.clientHeight / 2;
+        }
+      };
       if (photos.length > 1) {
         $('.prev', lb).onclick = () => go(-1);
         $('.next', lb).onclick = () => go(1);

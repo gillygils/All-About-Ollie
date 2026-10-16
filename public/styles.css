@@ -343,8 +343,15 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .lb { position: fixed; inset: 0; z-index: 60; background: rgba(10, 8, 6, .94); color: #f4efe8; display: grid; grid-template-rows: auto 1fr auto; animation: fade .15s; }
 .lb-top { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; gap: 12px; }
 .lb-top .count { opacity: .7; font-weight: 700; }
-.lb-stage { position: relative; display: grid; place-items: center; min-height: 0; padding: 0 64px; }
-.lb-stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); user-select: none; }
+.lb-stage { position: relative; min-height: 0; overflow: hidden; }
+/* Absolutely positioned so the whole photo always fits the space between the top and bottom bars. */
+.lb-stage img {
+  position: absolute; inset: 0; margin: auto; max-width: calc(100% - 128px); max-height: calc(100% - 8px);
+  border-radius: 6px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); user-select: none; cursor: zoom-in;
+}
+.lb.zoomed .lb-stage { overflow: auto; overscroll-behavior: contain; }
+.lb.zoomed .lb-stage img { position: static; max-width: none; max-height: none; margin: 0 auto; cursor: zoom-out; border-radius: 0; }
+.lb.zoomed .lb-nav { display: none; }
 .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255, 255, 255, .12); border: 0; color: #fff; width: 48px; height: 48px; border-radius: 50%; font-size: 1.4rem; cursor: pointer; }
 .lb-nav:hover { background: rgba(255, 255, 255, .22); }
 .lb-nav.prev { left: 10px; } .lb-nav.next { right: 10px; }
@@ -354,7 +361,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .lb .btn { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .18); color: #fff; }
 .lb .btn:hover { background: rgba(255, 255, 255, .2); }
 .lb .btn.danger { color: #ff9c8f; }
-@media (max-width: 640px) { .lb-stage { padding: 0 8px; } .lb-nav { display: none; } }
+@media (max-width: 640px) { .lb-stage img { max-width: calc(100% - 16px); } .lb-nav { display: none; } }
 
 /* ---------------------------------------------------------------- settings */
 

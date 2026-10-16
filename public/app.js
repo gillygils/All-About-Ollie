@@ -703,6 +703,7 @@
         <span class="ph">
           <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
           ${videoBadge(p)}
+          ${p.likeCount || p.commentCount ? `<span class="social">${[p.likeCount && `♥ ${p.likeCount}`, p.commentCount && `💬 ${p.commentCount}`].filter(Boolean).join('  ')}</span>` : ''}
           ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
           ${showEvent && p.eventTitle ? `<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
         </span>
@@ -727,9 +728,13 @@
       if (changed) ctx.onChange?.();
     };
     const go = (n) => { if (photos.length > 1) { i = (i + n + photos.length) % photos.length; render(); } };
+    let panelOpen = false; // comments panel stays open as you move between photos
     const onKey = (e) => {
       if ($$('.modal-back').some((b) => b.style.zIndex)) return; // a dialog on top of the viewer is open
+      const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
       if (e.key === 'Escape' && lb.classList.contains('zoomed')) lb.classList.remove('zoomed');
+      else if (e.key === 'Escape' && panelOpen) { panelOpen = false; render(); }
+      else if (typing) return;
       else if (e.key === 'Escape') close();
       else if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'ArrowRight') go(1);
@@ -737,7 +742,7 @@
     document.addEventListener('keydown', onKey);
 
     let touchX = null;
-    lb.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+    lb.addEventListener('touchstart', (e) => { touchX = e.target.closest('.lb-panel') ? null : e.touches[0].clientX; }, { passive: true });
     lb.addEventListener('touchend', (e) => {
       if (touchX == null || lb.classList.contains('zoomed')) return;
       const dx = e.changedTouches[0].clientX - touchX;
@@ -774,11 +779,39 @@
           ${media}
           ${photos.length > 1 ? '<button class="lb-nav next" aria-label="Next">›</button>' : ''}
         </div>
-        <div class="lb-bottom"><div>
-          ${p.caption ? `<div class="lb-caption">${esc(p.caption)}</div>` : ''}
-          <div class="lb-meta">${esc(meta)}</div>
-        </div></div>`;
+        <div class="lb-bottom">
+          <div>
+            ${p.caption ? `<div class="lb-caption">${esc(p.caption)}</div>` : ''}
+            <div class="lb-meta">${esc(meta)}</div>
+          </div>
+          <div class="row lb-social">
+            <button class="btn sm heart${p.liked ? ' on' : ''}" data-like aria-pressed="${!!p.liked}" aria-label="${p.liked ? 'Unlike' : 'Like'}">${p.liked ? '♥' : '♡'} ${p.likeCount || ''}</button>
+            <button class="btn sm" data-comments aria-expanded="${panelOpen}">💬 ${p.commentCount || ''}</button>
+          </div>
+        </div>
+        ${panelOpen ? `
+        <aside class="lb-panel" aria-label="Comments">
+          <div class="lb-panel-head"><h3>Comments</h3><button class="btn icon" data-close-panel aria-label="Close comments">✕</button></div>
+          <div class="liked-by"></div>
+          <div class="comments"><p class="muted small">Loading…</p></div>
+          <form class="comment-form">
+            <textarea name="body" rows="1" maxlength="1000" placeholder="Add a comment…" aria-label="Add a comment"></textarea>
+            <button class="btn sm primary" type="submit">Post</button>
+          </form>
+        </aside>` : ''}`;
+      lb.classList.toggle('with-panel', panelOpen);
       $('[data-x]', lb).onclick = close;
+
+      // ---- hearts & comments
+      $('[data-like]', lb).onclick = async () => {
+        try {
+          const r = await api(`/api/photos/${p.id}/like`, { method: 'PUT', body: { liked: !p.liked } });
+          p.liked = r.liked; p.likeCount = r.likeCount; changed = true;
+          render();
+        } catch (e) { oops(e); }
+      };
+      $('[data-comments]', lb).onclick = () => { panelOpen = !panelOpen; render(); };
+      if (panelOpen) loadComments(p);
       const stage = $('.lb-stage', lb);
       stage.onclick = (e) => { if (e.target === stage && !lb.classList.contains('zoomed')) close(); };
       // Click the photo to see it at full size (scroll to pan); click again to fit it back on screen.
@@ -825,7 +858,80 @@
         } catch (e) { oops(e); }
       };
     }
+
+    async function loadComments(p) {
+      const panel = $('.lb-panel', lb);
+      const list = $('.comments', panel);
+      const form = $('.comment-form', panel);
+      const input = form.elements.body;
+      $('[data-close-panel]', panel).onclick = () => { panelOpen = false; render(); };
+      // grow the box as you type; Enter posts, Shift+Enter makes a new line
+      input.oninput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(120, input.scrollHeight)}px`; };
+      input.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } };
+
+      const showOne = (c) => `
+        <div class="comment" data-id="${c.id}">
+          <div><strong>${esc(c.userName || 'A former member')}</strong> <span class="when">${esc(timeAgo(c.createdAt))}</span></div>
+          <p>${esc(c.body)}</p>
+          ${c.canDelete ? '<button class="link danger" data-del-comment>Delete</button>' : ''}
+        </div>`;
+      const draw = (comments, likedBy) => {
+        if (photos[i] !== p || !list.isConnected) return; // moved on to another photo meanwhile
+        $('.liked-by', panel).textContent = likedBy.length ? `♥ ${likedBy.join(', ')}` : '';
+        list.innerHTML = comments.length ? comments.map(showOne).join('') : '<p class="muted small">No comments yet. Be the first!</p>';
+        list.scrollTop = list.scrollHeight;
+      };
+
+      let comments = [];
+      let likers = [];
+      try {
+        ({ comments, likedBy: likers } = await api(`/api/photos/${p.id}/comments`));
+        draw(comments, likers);
+      } catch (e) { return oops(e); }
+
+      list.onclick = async (e) => {
+        const b = e.target.closest('[data-del-comment]');
+        if (!b || !confirm('Delete this comment?')) return;
+        const cid = Number(b.closest('.comment').dataset.id);
+        try {
+          await api(`/api/comments/${cid}`, { method: 'DELETE' });
+          comments = comments.filter((c) => c.id !== cid);
+          p.commentCount = comments.length; changed = true;
+          $('[data-comments]', lb).textContent = `💬 ${p.commentCount || ''}`;
+          draw(comments, likers);
+        } catch (err) { oops(err); }
+      };
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const body = input.value.trim();
+        if (!body) return;
+        const btn = $('[type=submit]', form);
+        btn.disabled = true;
+        try {
+          const c = await api(`/api/photos/${p.id}/comments`, { method: 'POST', body: { body } });
+          comments.push(c);
+          p.commentCount = comments.length; changed = true;
+          input.value = ''; input.style.height = '';
+          $('[data-comments]', lb).textContent = `💬 ${p.commentCount}`;
+          list.querySelector('p.muted')?.remove();
+          list.insertAdjacentHTML('beforeend', showOne(c));
+          list.scrollTop = list.scrollHeight;
+        } catch (err) { oops(err); } finally { btn.disabled = false; }
+      };
+    }
+
     render();
+  }
+
+  // "just now", "5m", "3h", "2d", then a date. SQLite gives UTC as "YYYY-MM-DD HH:MM:SS".
+  function timeAgo(s) {
+    const t = new Date(`${s.replace(' ', 'T')}Z`);
+    const sec = (Date.now() - t) / 1000;
+    if (sec < 60) return 'just now';
+    if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+    if (sec < 7 * 86400) return `${Math.floor(sec / 86400)}d`;
+    return t.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
   }
 
   function editCaption(photo, done) {

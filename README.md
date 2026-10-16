@@ -23,6 +23,13 @@ When the admin changes the PIN, every device has to enter the new one.
 
 People can edit or delete what they added. The admin can edit or delete anything they can see.
 
+## Comments and hearts
+
+Open any photo or video to add a comment or a ♥, like on Instagram. Tap **💬** to open the comments: on a computer they appear beside the photo, and on a phone they come up from the bottom. Polaroids show their ♥ and 💬 counts.
+
+- You can delete your own comments, and the admin can delete any comment.
+- Comments and hearts on a private photo are only visible to the people who can see that photo.
+
 ## Private photos
 
 When adding photos, choose **Only people I choose** and tick who may see them. To change it later, open the photo and tap the 🔒 / 👨‍👩‍👧 button.

@@ -84,6 +84,19 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (photo_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY,
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS likes (
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (photo_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS comments_photo ON comments(photo_id);
   CREATE INDEX IF NOT EXISTS photos_date ON photos(date);
   CREATE INDEX IF NOT EXISTS photos_event ON photos(event_id);
   CREATE INDEX IF NOT EXISTS events_date ON events(date);
@@ -374,7 +387,10 @@ app.post('/api/logout', (req, res) => {
 const PHOTO_SELECT = `
   SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height, p.restricted,
          p.kind, p.duration, p.status, p.uploaded_by AS uploadedBy, u.display_name AS uploaderName, p.created_at AS createdAt,
-         e.title AS eventTitle, e.emoji AS eventEmoji
+         e.title AS eventTitle, e.emoji AS eventEmoji,
+         (SELECT COUNT(*) FROM comments c WHERE c.photo_id = p.id) AS commentCount,
+         (SELECT COUNT(*) FROM likes l WHERE l.photo_id = p.id) AS likeCount,
+         EXISTS (SELECT 1 FROM likes l WHERE l.photo_id = p.id AND l.user_id = $uid) AS liked
   FROM photos p
   LEFT JOIN users u ON u.id = p.uploaded_by
   LEFT JOIN events e ON e.id = p.event_id`;
@@ -604,7 +620,55 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
       setAccess(photo.id, restricted, restricted ? readAllowed(b.allowedUserIds, photo.uploaded_by) : []);
     }
   });
-  res.json(get(`${PHOTO_SELECT} WHERE p.id = ?`, photo.id));
+  res.json(get(`${PHOTO_SELECT} WHERE p.id = $id`, { id: photo.id, uid: req.user.id }));
+});
+
+// ---- comments & hearts (only for people who can see the photo)
+
+const COMMENT_SELECT = `
+  SELECT c.id, c.body, c.created_at AS createdAt, c.user_id AS userId, u.display_name AS userName
+  FROM comments c LEFT JOIN users u ON u.id = c.user_id`;
+
+app.get('/api/photos/:id/comments', needUser, (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  res.json({
+    comments: all(`${COMMENT_SELECT} WHERE c.photo_id = ? ORDER BY c.id`, photo.id)
+      .map((c) => ({ ...c, canDelete: canEdit(req.user, c.userId) })),
+    likedBy: likedBy(photo.id),
+  });
+});
+const likedBy = (photoId) => all(
+  'SELECT u.display_name AS name FROM likes l JOIN users u ON u.id = l.user_id WHERE l.photo_id = ? ORDER BY l.rowid', photoId,
+).map((r) => r.name);
+
+app.post('/api/photos/:id/comments', needUser, (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  const body = text(req.body?.body, 1000);
+  if (!body) return fail(res, 'Write something first.');
+  const r = run('INSERT INTO comments(photo_id, user_id, body) VALUES(?, ?, ?)', photo.id, req.user.id, body);
+  res.json({ ...get(`${COMMENT_SELECT} WHERE c.id = ?`, Number(r.lastInsertRowid)), canDelete: true });
+});
+
+app.delete('/api/comments/:id', needUser, (req, res) => {
+  const c = get('SELECT * FROM comments WHERE id = ?', id(req.params.id));
+  if (!c || !visiblePhoto(c.photo_id, req.user)) return fail(res, 'Comment not found.', 404);
+  if (!canEdit(req.user, c.user_id)) return fail(res, 'You can only delete your own comments.', 403);
+  run('DELETE FROM comments WHERE id = ?', c.id);
+  res.json({ ok: true });
+});
+
+app.put('/api/photos/:id/like', needUser, (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  if (req.body?.liked) run('INSERT OR IGNORE INTO likes(photo_id, user_id) VALUES(?, ?)', photo.id, req.user.id);
+  else run('DELETE FROM likes WHERE photo_id = ? AND user_id = ?', photo.id, req.user.id);
+  res.json({
+    liked: !!req.body?.liked,
+    likeCount: get('SELECT COUNT(*) AS n FROM likes WHERE photo_id = ?', photo.id).n,
+    likedBy: likedBy(photo.id),
+  });
 });
 
 app.delete('/api/photos/:id', needUser, async (req, res) => {

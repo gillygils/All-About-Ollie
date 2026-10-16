@@ -405,7 +405,8 @@
     return `<div class="photo-grid">${photos.map((p, i) => `
       <button data-i="${i}" aria-label="Open photo${p.caption ? `: ${esc(p.caption)}` : ''}">
         <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
-        ${showEvent && p.eventTitle ? `<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
+        ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
+        ${showEvent && p.eventTitle ?`<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
       </button>`).join('')}</div>`;
   }
   function bindGrid(el, photos, ctx) {
@@ -447,14 +448,14 @@
       const p = photos[i];
       const mine = state.user.isAdmin || p.uploadedBy === state.user.id;
       const ev = ctx.event;
-      const meta = [fmtLong(p.date), p.eventTitle && `${p.eventEmoji || '⭐'} ${p.eventTitle}`, `added by ${p.uploaderName || 'a former member'}`].filter(Boolean).join(' · ');
+      const meta = [p.restricted && '🔒 Private', fmtLong(p.date), p.eventTitle && `${p.eventEmoji || '⭐'} ${p.eventTitle}`, `added by ${p.uploaderName || 'a former member'}`].filter(Boolean).join(' · ');
       lb.innerHTML = `
         <div class="lb-top">
           <span class="count">${i + 1} / ${photos.length}</span>
           <div class="row">
             <a class="btn sm" href="/media/full/${p.id}?download=1">⬇ Download</a>
             ${ev?.canEdit ? `<button class="btn sm" data-cover>${ev.coverId === p.id ? '★ Cover photo' : '☆ Make cover'}</button>` : ''}
-            ${mine ? '<button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>' : ''}
+            ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
             <button class="btn icon" data-x aria-label="Close">✕</button>
           </div>
         </div>
@@ -484,6 +485,8 @@
           render();
         } catch (e) { oops(e); }
       };
+      const access = $('[data-access]', lb);
+      if (access) access.onclick = () => editAccess(p, () => { changed = true; render(); });
       const cap = $('[data-caption]', lb);
       if (cap) cap.onclick = () => editCaption(p, () => { changed = true; render(); });
       const del = $('[data-del]', lb);
@@ -519,13 +522,65 @@
     });
   }
 
+  // ---------------------------------------------------------------- privacy
+
+  // "Who can see these?" — everyone, or only the people ticked. The uploader always can.
+  function accessPicker(members, { restricted = false, userIds = [], ownerId = state.user.id } = {}) {
+    const others = members.filter((m) => m.id !== ownerId);
+    return `
+      <div class="field access">Who can see ${ownerId === state.user.id ? 'these' : 'this'}?
+        <div class="access-modes">
+          <label><input type="radio" name="restricted" value="0"${restricted ? '' : ' checked'}> 👨‍👩‍👧 Everyone in the family</label>
+          <label><input type="radio" name="restricted" value="1"${restricted ? ' checked' : ''}> 🔒 Only people I choose</label>
+        </div>
+        <div class="access-people${restricted ? '' : ' hidden'}">
+          ${others.length ? others.map((m) => `
+            <label><input type="checkbox" name="allowed" value="${m.id}"${userIds.includes(m.id) ? ' checked' : ''}> ${esc(m.displayName)}</label>`).join('')
+            : '<span class="muted small">No one else has an account yet.</span>'}
+          <span class="hint">${ownerId === state.user.id ? 'You' : 'The person who added it'} can always see it. No one else can — not even admins.</span>
+        </div>
+      </div>`;
+  }
+  function bindAccessPicker(el) {
+    const people = $('.access-people', el);
+    $$('input[name=restricted]', el).forEach((r) => {
+      r.onchange = () => people.classList.toggle('hidden', $('input[name=restricted]:checked', el).value !== '1');
+    });
+    return () => ({
+      restricted: $('input[name=restricted]:checked', el).value === '1',
+      allowed: $$('input[name=allowed]:checked', el).map((c) => Number(c.value)),
+    });
+  }
+
+  function editAccess(photo, done) {
+    Promise.all([api('/api/members'), api(`/api/photos/${photo.id}/access`)]).then(([members, access]) => {
+      const m = modal(`
+        ${head('Who can see this photo?')}
+        <form class="form">
+          ${accessPicker(members, { restricted: access.restricted, userIds: access.userIds, ownerId: access.uploadedBy })}
+          <p class="error"></p>
+          <div class="row end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+        </form>`, { z: 70 });
+      const read = bindAccessPicker(m.el);
+      onSubmit($('form', m.el), async () => {
+        const { restricted, allowed } = read();
+        const updated = await api(`/api/photos/${photo.id}`, { method: 'PATCH', body: { restricted, allowedUserIds: allowed } });
+        photo.restricted = updated.restricted;
+        m.close();
+        toast(restricted ? 'Photo is now private 🔒' : 'Everyone can see this photo now');
+        done();
+      });
+    }).catch(oops);
+  }
+
   // ---------------------------------------------------------------- upload
 
   async function openUpload({ date, eventId } = {}) {
     let events;
-    try { events = await api('/api/events'); } catch (e) { return oops(e); }
+    let members;
+    try { [events, members] = await Promise.all([api('/api/events'), api('/api/members')]); } catch (e) { return oops(e); }
     const m = modal(`
-      ${head('Add photos', 'Everyone in the family will be able to see them.')}
+      ${head('Add photos', 'Choose a day, and who gets to see them.')}
       <form class="form">
         <div class="grid-2">
           <label class="field">Which day?<input type="date" name="date" required></label>
@@ -544,6 +599,7 @@
         <div class="previews"></div>
         <label class="field">Note <span class="hint">Optional — added to every photo in this batch</span>
           <input type="text" name="caption" maxlength="500" placeholder="First cuddle with Grandma"></label>
+        ${accessPicker(members)}
         <div class="progress hidden"><div></div></div>
         <p class="error"></p>
         <div class="row end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary" type="submit">Upload</button></div>
@@ -555,6 +611,7 @@
     const fileIn = $('input[type=file]', form);
     const previews = $('.previews', form);
     const submit = $('[type=submit]', form);
+    const readAccess = bindAccessPicker(form);
     let files = [];
 
     dateIn.value = date || todayISO();
@@ -581,6 +638,7 @@
 
     onSubmit(form, async () => {
       if (!files.length) throw new Error('Choose at least one photo.');
+      const access = readAccess();
       const bar = $('.progress', form);
       bar.classList.remove('hidden');
       const total = files.reduce((n, f) => n + f.size, 0) || 1;
@@ -594,6 +652,10 @@
         fd.append('date', dateIn.value);
         if (eventSel.value) fd.append('eventId', eventSel.value);
         fd.append('caption', form.elements.caption.value);
+        if (access.restricted) {
+          fd.append('restricted', '1');
+          fd.append('allowed', access.allowed.join(','));
+        }
         batch.forEach((f) => fd.append('photos', f));
         const res = await sendWithProgress(fd, (loaded) => {
           $('div', bar).style.width = `${Math.min(100, ((done + loaded) / total) * 100)}%`;

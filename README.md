@@ -15,7 +15,14 @@ When the admin changes the PIN, every device has to enter the new one.
 - **Events**: a card for each event with its title and a cover photo. Opening one shows only that event's photos.
 - **Settings**: theme (Cream, Blush, Ocean, Sage, Midnight), name and email, and password. The admin also gets the baby's name and birth date, the family PIN, and the member list (reset a password, make someone admin, remove someone).
 
-People can edit or delete what they added. The admin can edit or delete anything.
+People can edit or delete what they added. The admin can edit or delete anything they can see.
+
+## Private photos
+
+When adding photos, choose **Only people I choose** and tick who may see them. To change it later, open the photo and tap the 🔒 / 👨‍👩‍👧 button.
+
+- Private photos are visible only to the person who added them and the people they picked. **Admins don't get automatic access.**
+- For everyone else, private photos don't appear anywhere: not on the timeline, in events, in photo counts, or as an event's cover. The image links themselves return "not found".
 
 ## Run it
 

@@ -276,6 +276,23 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   font-weight: 700; padding: .2em .6em; border-radius: 999px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+.photo-grid .lock {
+  position: absolute; right: 8px; top: 8px; background: rgba(0, 0, 0, .55); width: 28px; height: 28px;
+  border-radius: 50%; display: grid; place-items: center; font-size: .8rem;
+}
+
+/* ---------------------------------------------------------------- privacy picker */
+
+.access { gap: .5rem; }
+.access label { display: flex; align-items: center; gap: .5em; font-weight: 600; cursor: pointer; }
+.access input { width: 1.1em; height: 1.1em; accent-color: var(--accent); margin: 0; }
+.access-modes { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; }
+.access-people {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: .5rem 1rem;
+  background: var(--surface-2); border-radius: 14px; padding: 12px 14px;
+}
+.access-people .hint { grid-column: 1 / -1; }
+
 /* ---------------------------------------------------------------- modal */
 
 .modal-back {

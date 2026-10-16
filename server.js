@@ -70,6 +70,11 @@ db.exec(`
     uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS photo_access (
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (photo_id, user_id)
+  );
   CREATE INDEX IF NOT EXISTS photos_date ON photos(date);
   CREATE INDEX IF NOT EXISTS photos_event ON photos(event_id);
   CREATE INDEX IF NOT EXISTS events_date ON events(date);
@@ -88,6 +93,16 @@ function tx(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
+
+// Older databases predate private photos.
+if (!all('PRAGMA table_info(photos)').some((c) => c.name === 'restricted')) {
+  db.exec('ALTER TABLE photos ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0');
+}
+
+// A private (restricted) photo is visible only to its uploader and the people on its access list.
+// Every query that reads photos must include this, binding $uid to the viewer's id.
+const VISIBLE = `(p.restricted = 0 OR p.uploaded_by = $uid
+  OR EXISTS (SELECT 1 FROM photo_access a WHERE a.photo_id = p.id AND a.user_id = $uid))`;
 
 const getSetting = (k) => get('SELECT value FROM settings WHERE key = ?', k)?.value ?? null;
 const setSetting = (k, v) =>
@@ -344,7 +359,7 @@ app.post('/api/logout', (req, res) => {
 // ---------------------------------------------------------------- timeline & photos
 
 const PHOTO_SELECT = `
-  SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height,
+  SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height, p.restricted,
          p.uploaded_by AS uploadedBy, u.display_name AS uploaderName, p.created_at AS createdAt,
          e.title AS eventTitle, e.emoji AS eventEmoji
   FROM photos p
@@ -358,7 +373,7 @@ app.get('/api/timeline', needUser, (req, res) => {
     if (!d) days.set(date, (d = { date, count: 0, photos: [], events: [] }));
     return d;
   };
-  for (const p of all('SELECT id, date FROM photos ORDER BY date, id')) {
+  for (const p of all(`SELECT p.id, p.date FROM photos p WHERE ${VISIBLE} ORDER BY p.date, p.id`, { uid: req.user.id })) {
     const d = day(p.date);
     d.count++;
     if (d.photos.length < 3) d.photos.push(p.id);
@@ -369,8 +384,29 @@ app.get('/api/timeline', needUser, (req, res) => {
 
 app.get('/api/photos', needUser, (req, res) => {
   if (!isDate(req.query.date)) return fail(res, 'Pick a date.');
-  res.json(all(`${PHOTO_SELECT} WHERE p.date = ? ORDER BY p.id`, req.query.date));
+  res.json(all(`${PHOTO_SELECT} WHERE p.date = $date AND ${VISIBLE} ORDER BY p.id`, { date: req.query.date, uid: req.user.id }));
 });
+
+// Everyone's names, for choosing who can see a private photo.
+app.get('/api/members', needUser, (req, res) => {
+  res.json(all('SELECT id, display_name AS displayName FROM users ORDER BY display_name COLLATE NOCASE'));
+});
+
+// The photo as this viewer is allowed to see it, or undefined.
+const visiblePhoto = (photoId, user) =>
+  get(`SELECT p.* FROM photos p WHERE p.id = $id AND ${VISIBLE}`, { id: photoId, uid: user.id });
+
+// Turns "3,7" or [3, 7] into ids of real members, leaving out the uploader (who always has access).
+function readAllowed(value, uploaderId) {
+  const list = Array.isArray(value) ? value : String(value || '').split(',');
+  const ids = [...new Set(list.map(id).filter(Boolean))].filter((u) => u !== uploaderId);
+  return ids.filter((u) => get('SELECT 1 AS x FROM users WHERE id = ?', u));
+}
+function setAccess(photoId, restricted, allowed) {
+  run('UPDATE photos SET restricted = ? WHERE id = ?', restricted ? 1 : 0, photoId);
+  run('DELETE FROM photo_access WHERE photo_id = ?', photoId);
+  if (restricted) for (const u of allowed) run('INSERT INTO photo_access(photo_id, user_id) VALUES(?, ?)', photoId, u);
+}
 
 const upload = multer({
   dest: DIRS.tmp,
@@ -392,6 +428,8 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
   if (!files.length) return fail(res, 'Choose at least one photo.');
 
   const caption = text(req.body.caption, 500) || null;
+  const restricted = req.body.restricted === '1';
+  const allowed = restricted ? readAllowed(req.body.allowed, req.user.id) : [];
   const saved = [];
   const failed = [];
   for (const f of files) {
@@ -408,11 +446,16 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
         .toFile(path.join(DIRS.thumb, `${name}.webp`));
       const ext = path.extname(f.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 8);
       await fs.promises.rename(f.path, path.join(DIRS.orig, name + ext));
-      const r = run(
-        'INSERT INTO photos(file, date, event_id, caption, width, height, uploaded_by) VALUES(?, ?, ?, ?, ?, ?, ?)',
-        name, date, eventId, caption, info.width, info.height, req.user.id,
-      );
-      saved.push(Number(r.lastInsertRowid));
+      const photoId = tx(() => {
+        const r = run(
+          'INSERT INTO photos(file, date, event_id, caption, width, height, uploaded_by) VALUES(?, ?, ?, ?, ?, ?, ?)',
+          name, date, eventId, caption, info.width, info.height, req.user.id,
+        );
+        const pid = Number(r.lastInsertRowid);
+        if (restricted) setAccess(pid, true, allowed);
+        return pid;
+      });
+      saved.push(photoId);
     } catch (err) {
       console.warn(`Could not process ${f.originalname}:`, err.message);
       failed.push(f.originalname);
@@ -424,8 +467,19 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
   res.json({ saved, failed });
 });
 
+app.get('/api/photos/:id/access', needUser, (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'Only the person who added this photo can see who it’s shared with.', 403);
+  res.json({
+    restricted: !!photo.restricted,
+    userIds: all('SELECT user_id AS id FROM photo_access WHERE photo_id = ?', photo.id).map((r) => r.id),
+    uploadedBy: photo.uploaded_by,
+  });
+});
+
 app.patch('/api/photos/:id', needUser, (req, res) => {
-  const photo = get('SELECT * FROM photos WHERE id = ?', id(req.params.id));
+  const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return fail(res, 'Photo not found.', 404);
   if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'You can only change photos you added.', 403);
   const b = req.body || {};
@@ -446,12 +500,16 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
   tx(() => {
     if (eventId !== photo.event_id) run('UPDATE events SET cover_photo_id = NULL WHERE cover_photo_id = ?', photo.id);
     run('UPDATE photos SET date = ?, event_id = ?, caption = ? WHERE id = ?', date, eventId, caption, photo.id);
+    if ('restricted' in b) {
+      const restricted = !!b.restricted;
+      setAccess(photo.id, restricted, restricted ? readAllowed(b.allowedUserIds, photo.uploaded_by) : []);
+    }
   });
   res.json(get(`${PHOTO_SELECT} WHERE p.id = ?`, photo.id));
 });
 
 app.delete('/api/photos/:id', needUser, async (req, res) => {
-  const photo = get('SELECT * FROM photos WHERE id = ?', id(req.params.id));
+  const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return fail(res, 'Photo not found.', 404);
   if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'You can only delete photos you added.', 403);
   run('DELETE FROM photos WHERE id = ?', photo.id);
@@ -465,13 +523,15 @@ app.delete('/api/photos/:id', needUser, async (req, res) => {
 
 // Images are only ever served to people who passed both locks.
 app.get('/media/:kind/:id', needUser, (req, res) => {
-  const photo = get('SELECT id, file FROM photos WHERE id = ?', id(req.params.id));
+  const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return res.sendStatus(404);
   let file;
   if (req.params.kind === 'thumb') file = path.join(DIRS.thumb, `${photo.file}.webp`);
   else if (req.params.kind === 'full') file = path.join(DIRS.full, `${photo.file}.jpg`);
   else return res.sendStatus(404);
-  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  // no-cache: browsers keep a copy but must re-ask (cheaply, via ETag) each time, so a photo made
+  // private — or a shared device where someone else logs in — never shows from cache.
+  res.set('Cache-Control', 'private, no-cache');
   if (req.query.download) res.attachment(`photo-${photo.id}.jpg`);
   res.sendFile(file);
 });
@@ -480,12 +540,15 @@ app.get('/media/:kind/:id', needUser, (req, res) => {
 
 const EVENT_LIST = `
   SELECT e.id, e.title, e.date, e.emoji,
-         COALESCE(e.cover_photo_id, (SELECT id FROM photos WHERE event_id = e.id ORDER BY id LIMIT 1)) AS coverId,
-         (SELECT COUNT(*) FROM photos WHERE event_id = e.id) AS count
+         COALESCE(
+           (SELECT p.id FROM photos p WHERE p.id = e.cover_photo_id AND ${VISIBLE}),
+           (SELECT p.id FROM photos p WHERE p.event_id = e.id AND ${VISIBLE} ORDER BY p.id LIMIT 1)
+         ) AS coverId,
+         (SELECT COUNT(*) FROM photos p WHERE p.event_id = e.id AND ${VISIBLE}) AS count
   FROM events e`;
 
 app.get('/api/events', needUser, (req, res) => {
-  res.json(all(`${EVENT_LIST} ORDER BY e.date, e.id`));
+  res.json(all(`${EVENT_LIST} ORDER BY e.date, e.id`, { uid: req.user.id }));
 });
 
 app.get('/api/events/:id', needUser, (req, res) => {
@@ -497,7 +560,7 @@ app.get('/api/events/:id', needUser, (req, res) => {
   );
   if (!ev) return fail(res, 'Event not found.', 404);
   ev.canEdit = canEdit(req.user, ev.createdBy);
-  res.json({ event: ev, photos: all(`${PHOTO_SELECT} WHERE p.event_id = ? ORDER BY p.id`, ev.id) });
+  res.json({ event: ev, photos: all(`${PHOTO_SELECT} WHERE p.event_id = $eid AND ${VISIBLE} ORDER BY p.id`, { eid: ev.id, uid: req.user.id }) });
 });
 
 function readEvent(b, current = {}) {
@@ -531,7 +594,8 @@ app.patch('/api/events/:id', needUser, (req, res) => {
   let cover = current.cover_photo_id;
   if ('coverId' in b) {
     cover = b.coverId == null ? null : id(b.coverId);
-    if (cover && !get('SELECT 1 AS x FROM photos WHERE id = ? AND event_id = ?', cover, current.id)) return fail(res, 'That photo isn’t in this event.');
+    const photo = cover && visiblePhoto(cover, req.user);
+    if (cover && (!photo || photo.event_id !== current.id)) return fail(res, 'That photo isn’t in this event.');
   }
   tx(() => {
     run('UPDATE events SET title = ?, date = ?, emoji = ?, description = ?, cover_photo_id = ? WHERE id = ?',

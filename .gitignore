@@ -1,5 +1,6 @@
 node_modules/
 # Photos, accounts and the database live here — never commit them.
 data/
+data-*/
 .env
 .claude/

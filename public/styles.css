@@ -143,8 +143,18 @@ textarea { resize: vertical; min-height: 4.5em; }
 main { padding: 24px 16px 120px; max-width: 1200px; margin: 0 auto; }
 main.full { max-width: none; padding-left: 0; padding-right: 0; }
 
+
 @media (max-width: 640px) {
-  .topbar { padding-bottom: 10px; }
+  /* backdrop-filter would trap the fixed bottom nav inside the header on phones */
+  .topbar { padding-bottom: 10px; backdrop-filter: none; background: var(--bg); }
+  .page-head { margin-bottom: 12px; }
+  .page-head h2 { font-size: 1.6rem; }
+  .tl-tools { flex-wrap: nowrap; width: 100%; }
+  .tl-tools .lbl { display: none; }
+  .tl-tools input[type=date] { width: 132px; min-height: 34px; }
+  .tl-tools #newEvent { margin-left: auto; }
+  .tl-track { padding-right: 96px; } /* lets the last day scroll clear of the + button */
+  .fab-label { display: none; }
   .nav { position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 16px; right: 16px; margin: 0; justify-content: space-around; box-shadow: var(--shadow); border: 1px solid var(--line); background: var(--surface); z-index: 30; }
   .nav a { flex: 1; justify-content: center; flex-direction: column; gap: 0; font-size: .75rem; padding: .4em; }
   .nav a.on { background: var(--accent-soft); box-shadow: none; }
@@ -159,7 +169,9 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   position: fixed; right: 24px; bottom: 24px; z-index: 25; box-shadow: var(--shadow);
   padding: .9em 1.4em; font-size: 1rem;
 }
-@media (max-width: 640px) { .fab { bottom: 88px; right: 16px; } }
+@media (max-width: 640px) {
+  .fab { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px); right: 16px; width: 56px; height: 56px; padding: 0; font-size: 1.7rem; border-radius: 50%; }
+}
 
 /* ---------------------------------------------------------------- timeline */
 
@@ -168,7 +180,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-tools input[type=date] { width: auto; padding: .45em .7em; border-radius: 999px; }
 .tl-jump { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: .9rem; color: var(--muted); }
 
-.tl-wrap { position: relative; }
+.tl-wrap { position: relative; --events-h: 128px; }
 .tl-scroller {
   overflow-x: auto; overflow-y: hidden; scroll-behavior: smooth; padding: 12px 0 28px;
   scrollbar-color: var(--line) transparent; overscroll-behavior-x: contain;
@@ -178,7 +190,6 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   content: ""; position: absolute; left: 0; right: 0; top: calc(var(--events-h) + 13px); height: 3px;
   background: repeating-linear-gradient(90deg, var(--line) 0 14px, transparent 14px 20px);
 }
-.tl-track { --events-h: 128px; }
 
 .tl-arrow { position: absolute; top: calc(var(--events-h, 128px) + 4px); z-index: 5; box-shadow: var(--shadow); }
 .tl-arrow.left { left: 12px; } .tl-arrow.right { right: 12px; }

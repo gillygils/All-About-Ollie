@@ -244,7 +244,7 @@
         </nav>
       </header>
       <main id="main"></main>
-      <button class="btn primary fab" id="fab">＋ Add photos</button>`;
+      <button class="btn primary fab" id="fab" aria-label="Add photos">＋<span class="fab-label"> Add photos</span></button>`;
     $('#fab').onclick = () => {
       const [tab, id] = currentRoute();
       openUpload(tab === 'events' && id ? { eventId: Number(id) } : {});
@@ -306,17 +306,20 @@
       track += dayHTML(d);
     }
     const photoTotal = data.days.reduce((n, d) => n + d.count, 0);
+    // Only leave as much room above the line as the busiest day's event labels need (max 3 + "more").
+    const maxPills = Math.max(0, ...data.days.map((d) => Math.min(d.events.length, 4)));
+    const eventsHeight = 24 + maxPills * 40;
     main.innerHTML = `
       <div class="tl-head page-head">
         <div><h2>Timeline</h2><p>${plural(photoTotal, 'photo')} across ${plural(data.days.length, 'day')}. Scroll sideways to travel through time.</p></div>
         <div class="tl-tools">
-          <label class="tl-jump">Jump to <input type="date" id="jump"></label>
-          <button class="btn sm" id="toStart">⏮ Beginning</button>
-          <button class="btn sm" id="toEnd">Latest ⏭</button>
-          <button class="btn sm primary" id="newEvent">＋ New event</button>
+          <label class="tl-jump"><span class="lbl">Jump to</span><input type="date" id="jump" aria-label="Jump to date"></label>
+          <button class="btn sm" id="toStart" aria-label="Beginning">⏮<span class="lbl"> Beginning</span></button>
+          <button class="btn sm" id="toEnd" aria-label="Latest"><span class="lbl">Latest </span>⏭</button>
+          <button class="btn sm primary" id="newEvent">＋ <span class="lbl">New </span>Event</button>
         </div>
       </div>
-      <div class="tl-wrap">
+      <div class="tl-wrap" style="--events-h:${eventsHeight}px">
         <button class="btn icon tl-arrow left" aria-label="Scroll back">‹</button>
         <div class="tl-scroller" id="tl"><div class="tl-track">${track}</div></div>
         <button class="btn icon tl-arrow right" aria-label="Scroll forward">›</button>

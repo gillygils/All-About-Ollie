@@ -306,9 +306,6 @@
       track += dayHTML(d);
     }
     const photoTotal = data.days.reduce((n, d) => n + d.count, 0);
-    // Only leave as much room above the line as the busiest day's event labels need (max 3 + "more").
-    const maxPills = Math.max(0, ...data.days.map((d) => Math.min(d.events.length, 4)));
-    const eventsHeight = 24 + maxPills * 40;
     main.innerHTML = `
       <div class="tl-head page-head">
         <div><h2>Timeline</h2><p>${plural(photoTotal, 'photo')} across ${plural(data.days.length, 'day')}. Scroll sideways to travel through time.</p></div>
@@ -319,7 +316,7 @@
           <button class="btn sm primary" id="newEvent">＋ <span class="lbl">New </span>Event</button>
         </div>
       </div>
-      <div class="tl-wrap" style="--events-h:${eventsHeight}px">
+      <div class="tl-wrap">
         <button class="btn icon tl-arrow left" aria-label="Scroll back">‹</button>
         <div class="tl-scroller" id="tl"><div class="tl-track">${track}</div></div>
         <button class="btn icon tl-arrow right" aria-label="Scroll forward">›</button>
@@ -355,13 +352,17 @@
   }
 
   function dayHTML(d) {
-    const shown = d.events.slice(0, 3);
-    const more = d.events.length - shown.length;
-    const events = shown.map((e) => `
-      <a class="tl-event" href="#/events/${e.id}" title="${esc(e.title)}"><span>${esc(e.emoji || '⭐')}</span><span>${esc(e.title)}</span></a>`).join('')
-      + (more > 0 ? `<button class="tl-event" data-day="${d.date}"><span>+${more} more</span></button>` : '')
-      + (d.events.length ? '<i class="stem"></i>' : '');
     const label = fmt(d.date, { month: 'short', day: 'numeric' });
+    // Days with events get their emoji right on the line; the names are listed under the date.
+    const icons = d.events.slice(0, 4).map((e) => `<span>${esc(e.emoji || '⭐')}</span>`).join('')
+      + (d.events.length > 4 ? `<small>+${d.events.length - 4}</small>` : '');
+    const marker = d.events.length ? `<span class="tl-badge" aria-hidden="true">${icons}</span>` : '<span class="tl-dot"></span>';
+    const shown = d.events.slice(0, 3);
+    const list = d.events.length ? `
+      <div class="tl-evlist">
+        ${shown.map((e) => `<a href="#/events/${e.id}" title="${esc(e.title)}"><span>${esc(e.emoji || '⭐')}</span><span>${esc(e.title)}</span></a>`).join('')}
+        ${d.events.length > shown.length ? `<button data-day="${d.date}">+${d.events.length - shown.length} more</button>` : ''}
+      </div>` : '';
     const stack = d.count
       ? `<button class="tl-stack" data-day="${d.date}" aria-label="See ${plural(d.count, 'photo')} from ${esc(fmtLong(d.date))}">
            ${d.photos.slice().reverse().map((id) => `<div class="pol"><img loading="lazy" src="/media/thumb/${id}" alt=""></div>`).join('')}
@@ -369,10 +370,10 @@
          </button>`
       : `<button class="tl-empty-stack" data-add="${d.date}" data-event="${d.events[0]?.id || ''}">＋ Add the first photos</button>`;
     return `
-      <div class="tl-day${d.events.length ? ' has-event' : ''}" data-date="${d.date}">
-        <div class="tl-events">${events}</div>
-        <div class="tl-dot"></div>
+      <div class="tl-day" data-date="${d.date}">
+        <div class="tl-axis">${marker}</div>
         <div class="tl-date"><strong>${esc(label)}</strong><small>${esc(age(d.date) || fmt(d.date, { weekday: 'long' }))}</small></div>
+        ${list}
         ${stack}
       </div>`;
   }
@@ -391,15 +392,28 @@
     let photos;
     try { photos = await api(`/api/photos?date=${date}`); } catch (e) { return oops(e); }
     const events = state.days.get(date)?.events || [];
-    const sub = [age(date), plural(photos.length, 'photo')].filter(Boolean).join(' · ');
+    const sub = [age(date), plural(events.length, 'event'), plural(photos.length, 'photo')].filter((s) => s && !s.startsWith('0 ')).join(' · ');
+    // One section per event (with its own photos), then whatever else happened that day.
+    const sections = events.map((e) => ({ event: e, photos: photos.filter((p) => p.eventId === e.id) }));
+    const loose = photos.filter((p) => !events.some((e) => e.id === p.eventId));
+    if (loose.length || !events.length) sections.push({ event: null, photos: loose });
     const m = modal(`
       ${head(esc(fmtLong(date)), esc(sub))}
-      ${events.length ? `<div class="row" style="margin-bottom:16px">${events.map((e) => `<a class="tl-event" href="#/events/${e.id}"><span>${esc(e.emoji || '⭐')}</span><span>${esc(e.title)}</span></a>`).join('')}</div>` : ''}
-      ${photos.length ? photoGrid(photos, true) : '<p class="muted">No photos on this day yet.</p>'}
+      ${sections.map((s, i) => `
+        <section class="day-section" data-s="${i}">
+          <div class="day-section-head">
+            ${s.event
+              ? `<h3><span>${esc(s.event.emoji || '⭐')}</span> ${esc(s.event.title)}</h3>
+                 <div class="row"><a class="btn sm ghost" href="#/events/${s.event.id}">Open event →</a><button class="btn sm" data-add-event="${s.event.id}">＋ Photos</button></div>`
+              : `<h3>${events.length ? 'More from this day' : 'Photos'}</h3>`}
+          </div>
+          ${s.photos.length ? photoGrid(s.photos) : `<p class="muted small">No photos ${s.event ? 'in this event' : 'on this day'} yet.</p>`}
+        </section>`).join('')}
       <div class="row end" style="margin-top:8px"><button class="btn primary" data-add>＋ Add photos to this day</button></div>`, { cls: 'wide' });
-    $$('.tl-event', m.el).forEach((a) => a.addEventListener('click', m.close));
+    $$('a[href^="#/events/"]', m.el).forEach((a) => a.addEventListener('click', m.close));
     $('[data-add]', m.el).onclick = () => { m.close(); openUpload({ date }); };
-    bindGrid(m.el, photos, { onChange: () => { m.close(); route(); } });
+    $$('[data-add-event]', m.el).forEach((b) => { b.onclick = () => { m.close(); openUpload({ eventId: Number(b.dataset.addEvent) }); }; });
+    $$('.day-section', m.el).forEach((el) => bindGrid(el, sections[el.dataset.s].photos, { onChange: () => { m.close(); route(); } }));
   }
 
   // ---------------------------------------------------------------- photo grid & viewer

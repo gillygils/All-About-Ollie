@@ -310,20 +310,29 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 
 /* Polaroids in a masonry grid — used on event pages (on cork) and in the day pop-up. */
 .photo-grid { columns: 4 200px; column-gap: 18px; }
-.photo-grid button {
-  display: block; width: 100%; margin: 0 0 18px; padding: 8px 8px 0; border: 0; background: var(--polaroid);
-  cursor: zoom-in; break-inside: avoid; position: relative; color: var(--polaroid-ink);
+.pg-item {
+  margin: 0 0 18px; padding: 8px 8px 6px; background: var(--polaroid); break-inside: avoid; position: relative; color: var(--polaroid-ink);
   box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 2px 5px 10px rgba(0, 0, 0, .3); transform: rotate(var(--r, 0deg)); transition: transform .2s;
 }
-.photo-grid button:hover { transform: rotate(0) translateY(-3px); }
+.pg-item:hover { transform: rotate(0) translateY(-3px); }
+.pg-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
 .photo-grid .ph { position: relative; display: block; }
-.photo-grid img { width: 100%; height: auto; }
-.photo-grid .cap { display: block; font-family: "Caveat", cursive; font-size: 1.15rem; line-height: 1.2; padding: 6px 2px 8px; min-height: 22px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.photo-grid img { width: 100%; height: auto; display: block; }
+/* Instagram's row: ♡ and 💬 right under the photo */
+.pg-actions { display: flex; gap: 4px; padding: 5px 0 0; }
+.pg-actions button {
+  border: 0; background: none; color: var(--polaroid-ink); font: 800 .95rem "Nunito", sans-serif; padding: 3px 6px; border-radius: 999px; cursor: pointer;
+}
+.pg-actions button:hover { background: color-mix(in srgb, var(--polaroid-ink) 10%, transparent); }
+.pg-like { font-size: 1.05rem !important; }
+.pg-like.on { color: #e8445f !important; }
+.photo-grid .cap { display: block; font-family: "Caveat", cursive; font-size: 1.15rem; line-height: 1.2; padding: 0 4px 2px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pop { animation: likepop .35s ease; }
+@keyframes likepop { 50% { transform: scale(1.35); } }
 .photo-grid .tag {
   position: absolute; left: 6px; top: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: .72rem;
   font-weight: 700; padding: .2em .6em; border-radius: 999px; max-width: calc(100% - 46px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.photo-grid .social { position: absolute; left: 6px; bottom: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: .72rem; font-weight: 800; padding: .15em .55em; border-radius: 999px; white-space: pre; }
 .photo-grid .lock {
   position: absolute; right: 6px; top: 6px; background: rgba(0, 0, 0, .55); width: 28px; height: 28px;
   border-radius: 50%; display: grid; place-items: center; font-size: .8rem;
@@ -381,16 +390,36 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .lb-top { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; gap: 12px; }
 .lb-top .count { opacity: .7; font-weight: 700; }
 .lb-stage { position: relative; min-height: 0; overflow: hidden; }
-/* Absolutely positioned so the whole photo always fits the space between the top and bottom bars. */
-.lb-stage img, .lb-stage video {
-  position: absolute; inset: 0; margin: auto; max-width: calc(100% - 128px); max-height: calc(100% - 8px);
-  border-radius: 6px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); user-select: none; cursor: zoom-in;
+/* The photo plus its Instagram-style row underneath, centred. The app sizes .lb-figure / .lb-media so both fit. */
+.lb-figure { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; width: 320px; display: flex; flex-direction: column; }
+.lb-media { position: relative; border-radius: 6px; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.lb-media img, .lb-media video { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-select: none; cursor: zoom-in; background: #000; }
+.lb-media video { cursor: default; }
+.lb-under { padding: 8px 2px 0; }
+.lb-actions { display: flex; gap: 10px; margin-left: -4px; }
+.lb-act { background: none; border: 0; color: #fff; font-size: 1.75rem; line-height: 1; padding: 2px 4px; cursor: pointer; }
+.lb-act:active { transform: scale(.88); }
+.lb-act.heart.on { color: #ff4d6d; }
+.lb-liked { font-size: .92rem; margin-top: 4px; }
+.lb-liked:empty { display: none; }
+.lb-under .lb-caption { margin-top: 2px; }
+.lb-viewall { display: block; background: none; border: 0; padding: 0; margin-top: 3px; color: rgba(255, 255, 255, .6); font: inherit; font-size: .92rem; cursor: pointer; text-align: left; }
+.lb-viewall:hover { color: #fff; }
+/* the big heart that pops on a double-tap */
+.heart-pop { position: absolute; left: 50%; top: 50%; font-size: 96px; line-height: 1; color: #fff; transform: translate(-50%, -50%) scale(0); opacity: 0; pointer-events: none; text-shadow: 0 6px 24px rgba(0, 0, 0, .45); }
+.heart-pop.pop { animation: heartpop .9s ease; }
+@keyframes heartpop {
+  15% { transform: translate(-50%, -50%) scale(1.25); opacity: 1; }
+  30% { transform: translate(-50%, -50%) scale(.95); opacity: 1; }
+  45%, 75% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
 }
-.lb-stage video { cursor: default; background: #000; }
-.lb-note { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); background: rgba(0, 0, 0, .7); color: #fff; padding: .6em 1em; border-radius: 12px; font-weight: 700; text-align: center; max-width: calc(100% - 32px); }
+.lb-note { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); background: rgba(0, 0, 0, .7); color: #fff; padding: .6em 1em; border-radius: 12px; font-weight: 700; text-align: center; width: max-content; max-width: calc(100% - 24px); }
 .lb.zoomed .lb-stage { overflow: auto; overscroll-behavior: contain; }
-.lb.zoomed .lb-stage img { position: static; max-width: none; max-height: none; margin: 0 auto; cursor: zoom-out; border-radius: 0; }
-.lb.zoomed .lb-nav { display: none; }
+.lb.zoomed .lb-figure { position: static; transform: none; width: auto !important; }
+.lb.zoomed .lb-media { height: auto !important; border-radius: 0; overflow: visible; box-shadow: none; }
+.lb.zoomed .lb-media img { width: auto; height: auto; max-width: none; margin: 0 auto; cursor: zoom-out; }
+.lb.zoomed .lb-under, .lb.zoomed .lb-nav { display: none; }
 .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255, 255, 255, .12); border: 0; color: #fff; width: 48px; height: 48px; border-radius: 50%; font-size: 1.4rem; cursor: pointer; }
 .lb-nav:hover { background: rgba(255, 255, 255, .22); }
 .lb-nav.prev { left: 10px; } .lb-nav.next { right: 10px; }
@@ -401,9 +430,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .lb .btn:hover { background: rgba(255, 255, 255, .2); }
 .lb .btn.danger { color: #ff9c8f; }
 
-/* hearts & comments in the viewer */
-.lb-social { flex-wrap: nowrap; }
-.lb .btn.heart.on { color: #ff6b81; border-color: rgba(255, 107, 129, .5); }
+/* comments panel in the viewer */
 .lb-panel {
   position: absolute; top: 60px; right: 0; bottom: 0; width: 340px; z-index: 3; display: flex; flex-direction: column;
   background: rgba(28, 25, 22, .97); border-left: 1px solid rgba(255, 255, 255, .1); color: #f4efe8;
@@ -428,7 +455,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   .lb-panel { top: auto; left: 0; width: auto; height: 62vh; border-left: 0; border-radius: 18px 18px 0 0; box-shadow: 0 -10px 30px rgba(0, 0, 0, .5); }
   .lb.with-panel .lb-stage, .lb.with-panel .lb-bottom { margin-right: 0; }
 }
-@media (max-width: 640px) { .lb-stage img, .lb-stage video { max-width: calc(100% - 16px); } .lb-nav { display: none; } }
+@media (max-width: 640px) { .lb-nav { display: none; } }
 
 /* ---------------------------------------------------------------- settings */
 

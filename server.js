@@ -390,7 +390,9 @@ const PHOTO_SELECT = `
          e.title AS eventTitle, e.emoji AS eventEmoji,
          (SELECT COUNT(*) FROM comments c WHERE c.photo_id = p.id) AS commentCount,
          (SELECT COUNT(*) FROM likes l WHERE l.photo_id = p.id) AS likeCount,
-         EXISTS (SELECT 1 FROM likes l WHERE l.photo_id = p.id AND l.user_id = $uid) AS liked
+         EXISTS (SELECT 1 FROM likes l WHERE l.photo_id = p.id AND l.user_id = $uid) AS liked,
+         (SELECT u2.display_name FROM likes l JOIN users u2 ON u2.id = l.user_id
+           WHERE l.photo_id = p.id ORDER BY l.rowid LIMIT 1) AS firstLiker
   FROM photos p
   LEFT JOIN users u ON u.id = p.uploaded_by
   LEFT JOIN events e ON e.id = p.event_id`;
@@ -664,11 +666,8 @@ app.put('/api/photos/:id/like', needUser, (req, res) => {
   if (!photo) return fail(res, 'Photo not found.', 404);
   if (req.body?.liked) run('INSERT OR IGNORE INTO likes(photo_id, user_id) VALUES(?, ?)', photo.id, req.user.id);
   else run('DELETE FROM likes WHERE photo_id = ? AND user_id = ?', photo.id, req.user.id);
-  res.json({
-    liked: !!req.body?.liked,
-    likeCount: get('SELECT COUNT(*) AS n FROM likes WHERE photo_id = ?', photo.id).n,
-    likedBy: likedBy(photo.id),
-  });
+  const names = likedBy(photo.id);
+  res.json({ liked: !!req.body?.liked, likeCount: names.length, likedBy: names, firstLiker: names[0] || null });
 });
 
 app.delete('/api/photos/:id', needUser, async (req, res) => {

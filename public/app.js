@@ -697,38 +697,86 @@
     : p.status === 'processing' ? '<span class="play">▶</span><span class="processing">Converting…</span>'
     : `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}`);
 
+  // ---- hearts, shared by the grid and the viewer
+  const likeLabel = (p) => `${p.liked ? '♥' : '♡'}${p.likeCount ? ` ${p.likeCount}` : ''}`;
+  const commentLabel = (p) => `💬${p.commentCount ? ` ${p.commentCount}` : ''}`;
+  async function toggleLike(p, force) {
+    const want = force ?? !p.liked;
+    if (want === !!p.liked) return;
+    const r = await api(`/api/photos/${p.id}/like`, { method: 'PUT', body: { liked: want } });
+    Object.assign(p, { liked: r.liked, likeCount: r.likeCount, firstLiker: r.firstLiker });
+  }
+  // "Liked by Grandma Sue and 2 others", like Instagram
+  function likedLine(p) {
+    if (!p.likeCount) return '';
+    const who = p.firstLiker || 'someone';
+    const others = p.likeCount - 1;
+    return `Liked by <b>${esc(who)}</b>${others ? ` and <b>${plural(others, 'other')}</b>` : ''}`;
+  }
+  const pop = (el) => { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); };
+
+  // Polaroids in a grid, each with Instagram's ♡ 💬 row right under the photo.
   function photoGrid(photos, showEvent = false) {
     return `<div class="photo-grid">${photos.map((p, i) => `
-      <button data-i="${i}" style="--r:${tilt(p.id)}" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}${p.caption ? `: ${esc(p.caption)}` : ''}">
-        <span class="ph">
-          <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
-          ${videoBadge(p)}
-          ${p.likeCount || p.commentCount ? `<span class="social">${[p.likeCount && `♥ ${p.likeCount}`, p.commentCount && `💬 ${p.commentCount}`].filter(Boolean).join('  ')}</span>` : ''}
-          ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
-          ${showEvent && p.eventTitle ? `<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
-        </span>
-        <span class="cap">${esc(p.caption || '')}</span>
-      </button>`).join('')}</div>`;
+      <div class="pg-item" data-i="${i}" style="--r:${tilt(p.id)}">
+        <button class="pg-open" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}${p.caption ? `: ${esc(p.caption)}` : ''}">
+          <span class="ph">
+            <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
+            ${videoBadge(p)}
+            ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
+            ${showEvent && p.eventTitle ? `<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
+          </span>
+        </button>
+        <div class="pg-actions">
+          <button class="pg-like${p.liked ? ' on' : ''}" data-like aria-pressed="${!!p.liked}" aria-label="Like">${likeLabel(p)}</button>
+          <button class="pg-comment" data-comment aria-label="Comments">${commentLabel(p)}</button>
+        </div>
+        ${p.caption ? `<span class="cap">${esc(p.caption)}</span>` : ''}
+      </div>`).join('')}</div>`;
   }
-  function bindGrid(el, photos, ctx) {
-    $$('.photo-grid button', el).forEach((b) => { b.onclick = () => openViewer(photos, Number(b.dataset.i), ctx); });
+  function bindGrid(el, photos, ctx = {}) {
+    // after the viewer closes, refresh the ♡/💬 counts in place (no reload needed)
+    const sync = () => $$('.pg-item', el).forEach((item) => {
+      const p = photos[Number(item.dataset.i)];
+      if (!p) return;
+      const like = $('[data-like]', item);
+      like.textContent = likeLabel(p);
+      like.classList.toggle('on', !!p.liked);
+      like.setAttribute('aria-pressed', !!p.liked);
+      $('[data-comment]', item).textContent = commentLabel(p);
+    });
+    const opts = { ...ctx, onSocial: sync };
+    $$('.pg-item', el).forEach((item) => {
+      const i = Number(item.dataset.i);
+      $('.pg-open', item).onclick = () => openViewer(photos, i, opts);
+      $('[data-comment]', item).onclick = () => openViewer(photos, i, { ...opts, comments: true });
+      const like = $('[data-like]', item);
+      like.onclick = async () => {
+        try { await toggleLike(photos[i]); sync(); if (photos[i].liked) pop(like); } catch (e) { oops(e); }
+      };
+    });
   }
 
   function openViewer(photos, start, ctx = {}) {
     let i = start;
-    let changed = false;
+    let changed = false;   // something that needs the page reloaded (delete, caption, privacy …)
+    let social = false;    // hearts or comments changed — just refresh the counts
     const lb = document.createElement('div');
     lb.className = 'lb';
     lb.setAttribute('role', 'dialog');
     document.body.appendChild(lb);
 
+    const onResize = () => fit();
+    window.addEventListener('resize', onResize);
     const close = () => {
       lb.remove();
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
       if (changed) ctx.onChange?.();
+      else if (social) ctx.onSocial?.();
     };
     const go = (n) => { if (photos.length > 1) { i = (i + n + photos.length) % photos.length; render(); } };
-    let panelOpen = false; // comments panel stays open as you move between photos
+    let panelOpen = !!ctx.comments; // comments panel stays open as you move between photos
     const onKey = (e) => {
       if ($$('.modal-back').some((b) => b.style.zIndex)) return; // a dialog on top of the viewer is open
       const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
@@ -749,6 +797,23 @@
       touchX = null;
       if (Math.abs(dx) > 50) go(dx > 0 ? -1 : 1);
     });
+
+    // Size the photo so it and the ♡ 💬 row under it fit on screen together.
+    function fit() {
+      const fig = $('.lb-figure', lb);
+      const stage = $('.lb-stage', lb);
+      if (!fig || lb.classList.contains('zoomed')) return;
+      const p = photos[i];
+      const below = $('.lb-under', fig).offsetHeight;
+      const side = window.innerWidth <= 640 ? 16 : 128;
+      const availW = stage.clientWidth - side;
+      const availH = stage.clientHeight - below - 12;
+      const w = p.width || 4, h = p.height || 3;
+      const s = Math.min(availW / w, availH / h, 1);
+      // never narrower than 260px, so the ♡ 💬 row has room under a tall, thin photo
+      fig.style.width = `${Math.max(260, Math.floor(w * s))}px`;
+      $('.lb-media', fig).style.height = `${Math.floor(h * s)}px`;
+    }
 
     function render() {
       const p = photos[i];
@@ -776,19 +841,21 @@
         </div>
         <div class="lb-stage">
           ${photos.length > 1 ? '<button class="lb-nav prev" aria-label="Previous">‹</button>' : ''}
-          ${media}
+          <figure class="lb-figure">
+            <div class="lb-media">${media}<span class="heart-pop" aria-hidden="true">♥</span></div>
+            <figcaption class="lb-under">
+              <div class="lb-actions">
+                <button class="lb-act heart${p.liked ? ' on' : ''}" data-like aria-pressed="${!!p.liked}" aria-label="${p.liked ? 'Unlike' : 'Like'}">${p.liked ? '♥' : '♡'}</button>
+                <button class="lb-act" data-comments aria-expanded="${panelOpen}" aria-label="Comments">💬</button>
+              </div>
+              <div class="lb-liked">${likedLine(p)}</div>
+              ${p.caption ? `<div class="lb-caption">${esc(p.caption)}</div>` : ''}
+              <button class="lb-viewall" data-comments>${p.commentCount ? `View ${p.commentCount === 1 ? 'the comment' : `all ${p.commentCount} comments`}` : 'Add a comment…'}</button>
+            </figcaption>
+          </figure>
           ${photos.length > 1 ? '<button class="lb-nav next" aria-label="Next">›</button>' : ''}
         </div>
-        <div class="lb-bottom">
-          <div>
-            ${p.caption ? `<div class="lb-caption">${esc(p.caption)}</div>` : ''}
-            <div class="lb-meta">${esc(meta)}</div>
-          </div>
-          <div class="row lb-social">
-            <button class="btn sm heart${p.liked ? ' on' : ''}" data-like aria-pressed="${!!p.liked}" aria-label="${p.liked ? 'Unlike' : 'Like'}">${p.liked ? '♥' : '♡'} ${p.likeCount || ''}</button>
-            <button class="btn sm" data-comments aria-expanded="${panelOpen}">💬 ${p.commentCount || ''}</button>
-          </div>
-        </div>
+        <div class="lb-bottom"><div class="lb-meta">${esc(meta)}</div></div>
         ${panelOpen ? `
         <aside class="lb-panel" aria-label="Comments">
           <div class="lb-panel-head"><h3>Comments</h3><button class="btn icon" data-close-panel aria-label="Close comments">✕</button></div>
@@ -800,31 +867,57 @@
           </form>
         </aside>` : ''}`;
       lb.classList.toggle('with-panel', panelOpen);
+      lb.classList.remove('zoomed');
       $('[data-x]', lb).onclick = close;
+      requestAnimationFrame(fit);
 
       // ---- hearts & comments
-      $('[data-like]', lb).onclick = async () => {
+      const heartBtn = $('[data-like]', lb);
+      const like = async (force) => {
         try {
-          const r = await api(`/api/photos/${p.id}/like`, { method: 'PUT', body: { liked: !p.liked } });
-          p.liked = r.liked; p.likeCount = r.likeCount; changed = true;
-          render();
+          await toggleLike(p, force);
+          social = true;
+          heartBtn.textContent = p.liked ? '♥' : '♡';
+          heartBtn.classList.toggle('on', !!p.liked);
+          heartBtn.setAttribute('aria-pressed', !!p.liked);
+          $('.lb-liked', lb).innerHTML = likedLine(p);
+          if (p.liked) pop(heartBtn);
+          if (panelOpen) loadComments(p); // refresh the "♥ who liked it" line
         } catch (e) { oops(e); }
       };
-      $('[data-comments]', lb).onclick = () => { panelOpen = !panelOpen; render(); };
+      heartBtn.onclick = () => like();
+      $$('[data-comments]', lb).forEach((b) => { b.onclick = () => { panelOpen = !panelOpen; render(); }; });
       if (panelOpen) loadComments(p);
+
       const stage = $('.lb-stage', lb);
       stage.onclick = (e) => { if (e.target === stage && !lb.classList.contains('zoomed')) close(); };
-      // Click the photo to see it at full size (scroll to pan); click again to fit it back on screen.
-      lb.classList.remove('zoomed');
-      const photo = isVideo ? null : $('img', stage);
-      if (photo) photo.onclick = (e) => {
-        const fx = e.offsetX / photo.clientWidth; // where on the photo was clicked, measured before zooming
-        const fy = e.offsetY / photo.clientHeight;
-        if (lb.classList.toggle('zoomed')) {
-          stage.scrollLeft = fx * photo.naturalWidth - stage.clientWidth / 2;
-          stage.scrollTop = fy * photo.naturalHeight - stage.clientHeight / 2;
+
+      // Tap the photo to see it at full size (scroll to pan); tap again to fit it back.
+      // Double-tap likes it, with a heart that pops up — like Instagram.
+      const mediaBox = $('.lb-media', lb);
+      const photo = isVideo ? null : $('img', mediaBox);
+      let lastTap = 0;
+      let tapTimer = 0;
+      mediaBox.addEventListener('click', (e) => {
+        if (isVideo && e.target.tagName === 'VIDEO') return; // let the video controls work
+        const now = Date.now();
+        if (now - lastTap < 300) {
+          clearTimeout(tapTimer); lastTap = 0;
+          if (!lb.classList.contains('zoomed')) { pop($('.heart-pop', mediaBox)); like(true); }
+          return;
         }
-      };
+        lastTap = now;
+        if (!photo) return;
+        const fx = e.offsetX / photo.clientWidth; // where on the photo was tapped, measured before zooming
+        const fy = e.offsetY / photo.clientHeight;
+        tapTimer = setTimeout(() => {
+          if (lb.classList.toggle('zoomed')) {
+            stage.scrollLeft = fx * photo.naturalWidth - stage.clientWidth / 2;
+            stage.scrollTop = fy * photo.naturalHeight - stage.clientHeight / 2;
+          } else fit();
+        }, 300);
+      });
+
       if (photos.length > 1) {
         $('.prev', lb).onclick = () => go(-1);
         $('.next', lb).onclick = () => go(1);
@@ -875,6 +968,9 @@
           <p>${esc(c.body)}</p>
           ${c.canDelete ? '<button class="link danger" data-del-comment>Delete</button>' : ''}
         </div>`;
+      const viewAll = () => {
+        $('.lb-viewall', lb).textContent = p.commentCount ? `View ${p.commentCount === 1 ? 'the comment' : `all ${p.commentCount} comments`}` : 'Add a comment…';
+      };
       const draw = (comments, likedBy) => {
         if (photos[i] !== p || !list.isConnected) return; // moved on to another photo meanwhile
         $('.liked-by', panel).textContent = likedBy.length ? `♥ ${likedBy.join(', ')}` : '';
@@ -896,8 +992,8 @@
         try {
           await api(`/api/comments/${cid}`, { method: 'DELETE' });
           comments = comments.filter((c) => c.id !== cid);
-          p.commentCount = comments.length; changed = true;
-          $('[data-comments]', lb).textContent = `💬 ${p.commentCount || ''}`;
+          p.commentCount = comments.length; social = true;
+          viewAll();
           draw(comments, likers);
         } catch (err) { oops(err); }
       };
@@ -910,9 +1006,9 @@
         try {
           const c = await api(`/api/photos/${p.id}/comments`, { method: 'POST', body: { body } });
           comments.push(c);
-          p.commentCount = comments.length; changed = true;
+          p.commentCount = comments.length; social = true;
           input.value = ''; input.style.height = '';
-          $('[data-comments]', lb).textContent = `💬 ${p.commentCount}`;
+          viewAll();
           list.querySelector('p.muted')?.remove();
           list.insertAdjacentHTML('beforeend', showOne(c));
           list.scrollTop = list.scrollHeight;

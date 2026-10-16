@@ -25,7 +25,7 @@ People can edit or delete what they added. The admin can edit or delete anything
 
 ## Comments and hearts
 
-Open any photo or video to add a comment or a ♥, like on Instagram. Tap **💬** to open the comments: on a computer they appear beside the photo, and on a phone they come up from the bottom. Polaroids show their ♥ and 💬 counts.
+Like Instagram, every photo and video has a **♡ 💬** row right under it, both on the polaroids and in the viewer. Tap ♡ to like a photo (or double-tap the photo in the viewer). Tap 💬 to open its comments: on a computer they appear beside the photo, and on a phone they come up from the bottom. Under the photo you also see "Liked by Grandma Sue and 2 others", the caption, and "View all 5 comments".
 
 - You can delete your own comments, and the admin can delete any comment.
 - Comments and hearts on a private photo are only visible to the people who can see that photo.

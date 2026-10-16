@@ -1,6 +1,6 @@
 # All About Ollie
 
-A private, living scrapbook for Ollie. Family and friends can browse a sideways-scrolling timeline, mark events like "First tooth" or "1st birthday", and add photos to any day.
+A private, living scrapbook for Ollie. Photos and videos are pinned as polaroids on a cork board timeline that you zoom through like Apple Photos. Family and friends can mark events like "First tooth" or "1st birthday" and add memories to any day.
 
 ## Two locks
 
@@ -11,9 +11,15 @@ When the admin changes the PIN, every device has to enter the new one.
 
 ## Pages
 
-- **Timeline** (home): a sideways timeline of every day that has photos or events. It shows Ollie's age at each point, jumps to any date, and opens a day's photos when you click its stack.
-- **Events**: a card for each event with its title and a cover photo. Opening one shows only that event's photos.
-- **Settings**: theme (Cream, Blush, Ocean, Sage, Midnight), name and email, and password. The admin also gets the baby's name and birth date, the family PIN, and the member list (reset a password, make someone admin, remove someone).
+- **Timeline** (home): a cork board with polaroid stacks strung along a piece of twine. Zoom between **Years, Months, Weeks and Days**:
+  - On a phone, pinch.
+  - On a computer, pinch the trackpad, use ctrl + scroll, or click − / + or a level name.
+  - The stack you zoom on stays put while the levels cross-fade, and it settles on the nearest level when you let go.
+  - Tap a month or week to dive into it. Tap a day to see all its photos, grouped by event.
+  - Swipe, scroll or drag to move along the timeline. Each stack shows Ollie's age, and you can jump to any date.
+  - If a stack holds a video, the video goes on top.
+- **Events**: a pinned polaroid for each event with its title and a cover photo. Opening one shows only that event's photos and videos.
+- **Settings**: theme, name and email, and password. Each theme (Cream, Blush, Ocean, Sage, Midnight) tints the cork and frame, and Midnight uses dark polaroids. The admin also gets the baby's name and birth date, the family PIN, and the member list (reset a password, make someone admin, remove someone).
 
 People can edit or delete what they added. The admin can edit or delete anything they can see.
 
@@ -24,9 +30,27 @@ When adding photos, choose **Only people I choose** and tick who may see them. T
 - Private photos are visible only to the person who added them and the people they picked. **Admins don't get automatic access.**
 - For everyone else, private photos don't appear anywhere: not on the timeline, in events, in photo counts, or as an event's cover. The image links themselves return "not found".
 
+## Videos
+
+Videos upload like photos, up to 2 GB each. The server then:
+
+- grabs a frame to use as the thumbnail;
+- converts the video in the background to H.264 MP4 (at most 1080p), so phone videos, including iPhone HEVC `.mov`, play in every browser;
+- strips location data from the converted copy.
+
+Until conversion finishes, the video shows as "Converting…". It's usually a minute or two.
+
+This needs **ffmpeg** on the server. On Debian or Ubuntu, including a Proxmox LXC:
+
+```bash
+apt install ffmpeg
+```
+
+If ffmpeg isn't installed, the site still works, but video uploads are refused with a message. If ffmpeg isn't on the `PATH`, set `FFMPEG_PATH` and `FFPROBE_PATH`.
+
 ## Run it
 
-Requires [Node.js](https://nodejs.org) 22.13 or newer.
+Requires [Node.js](https://nodejs.org) 22.13 or newer, and ffmpeg for videos.
 
 ```bash
 npm install
@@ -42,8 +66,9 @@ Everything lives in `data/`, which is git-ignored. **Back this folder up.**
 | Path | What |
 |---|---|
 | `data/scrapbook.db` | Accounts, events, and photo info (SQLite) |
-| `data/photos/` | Resized copies people see. Location data (GPS) is removed. |
+| `data/photos/` | Resized copies people see (and video poster frames). Location data (GPS) is removed. |
 | `data/thumbs/` | Small previews |
+| `data/videos/` | Converted MP4s people watch |
 | `data/originals/` | Untouched originals as uploaded. They are never shown on the site. |
 
 ## Hosting it online

@@ -275,8 +275,73 @@
 
   // ---------------------------------------------------------------- timeline
 
-  async function viewTimeline(main, { focusDate } = {}) {
-    if (!main.querySelector('.tl-scroller')) loading(main);
+  // The timeline is a cork board you zoom through like Apple Photos: Years → Months → Weeks → Days.
+  // Each level is a row of polaroid stacks. Zooming scales the current row around your fingers;
+  // between two levels both rows are drawn, cross-fading, with the stack you're on lined up with
+  // the one that holds it — so nothing slides. Letting go settles on the nearest level.
+  const isoOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const mondayOf = (s) => { const d = toDate(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoOf(d); };
+  const fmtDur = (sec) => { sec = Math.round(sec || 0); return `${Math.floor(sec / 60)}:${pad(sec % 60)}`; };
+  const ZOOM_LEVELS = [
+    { name: 'Years', key: (d) => d.slice(0, 4), label: (g) => g.start.slice(0, 4), sub: (g) => `${plural(g.dayCount, 'day')} of memories` },
+    { name: 'Months', key: (d) => d.slice(0, 7), label: (g) => fmt(g.start, { month: 'long', year: 'numeric' }), sub: (g) => age(g.start) },
+    {
+      name: 'Weeks', key: mondayOf, sub: (g) => age(g.start),
+      label: (g) => {
+        const m = toDate(g.k);
+        const e = new Date(m); e.setDate(e.getDate() + 6);
+        return `${m.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${e.toLocaleDateString(undefined, m.getMonth() === e.getMonth() ? { day: 'numeric' } : { month: 'short', day: 'numeric' })}`;
+      },
+    },
+    {
+      name: 'Days', key: (d) => d, sub: (g) => age(g.start) || fmt(g.start, { weekday: 'long' }),
+      label: (g) => fmt(g.start, { month: 'short', day: 'numeric', ...(g.start.slice(0, 4) === todayISO().slice(0, 4) ? {} : { year: 'numeric' }) }),
+    },
+  ];
+  const MAXL = ZOOM_LEVELS.length - 1;
+  const W = 250;          // spacing between stacks at full size
+  const G = 1.9;          // how much a row grows before it has become the next level
+  const F_MIN = -0.3;     // a little extra zoom out past Years …
+  const F_MAX = 0.35;     // … and in past Days (both spring back)
+
+  function buildGroups(days) {
+    return ZOOM_LEVELS.map((Z) => {
+      const out = [];
+      for (const d of days) {
+        const k = Z.key(d.date);
+        let g = out[out.length - 1];
+        if (!g || g.k !== k) out.push(g = { k, start: d.date, end: d.date, previews: [], events: [], photoCount: 0, videoCount: 0, dayCount: 0 });
+        g.end = d.date;
+        g.previews.push(...d.previews);
+        g.events.push(...d.events);
+        g.photoCount += d.photoCount; g.videoCount += d.videoCount; g.dayCount++;
+      }
+      return out;
+    });
+  }
+
+  function stackHTML(g, l) {
+    const Z = ZOOM_LEVELS[l];
+    const top = g.previews.find((p) => p.kind === 'video') || g.previews[0]; // a video always goes on top
+    const under = g.previews.filter((p) => p !== top).slice(0, 2);
+    const pol = (p, cls, front) => `<div class="pol ${cls}">${front ? '<span class="pin"></span>' : ''}
+      <div class="ph"><img src="/media/thumb/${p.id}" alt="" loading="lazy" draggable="false">${p.kind === 'video' ? `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}` : ''}</div>
+      ${front ? `<div class="cap">${esc(p.caption || '')}</div>` : ''}</div>`;
+    const icons = g.events.slice(0, 4).map((e) => esc(e.emoji || '⭐')).join('') + (g.events.length > 4 ? `<small>+${g.events.length - 4}</small>` : '');
+    const names = g.events.slice(0, 2).map((e) => `<a href="#/events/${e.id}">${esc(`${e.emoji || '⭐'} ${e.title}`)}</a>`).join('')
+      + (g.events.length > 2 ? `<em>+${g.events.length - 2} more</em>` : '');
+    const count = [g.photoCount && plural(g.photoCount, 'photo'), g.videoCount && plural(g.videoCount, 'video')].filter(Boolean).join(' · ');
+    const stack = top
+      ? `${under[1] ? pol(under[1], 'a') : ''}${under[0] ? pol(under[0], 'b') : ''}${pol(top, 'c', true)}<span class="tl-tag">${count}</span>`
+      : `<div class="pol c" data-add><span class="pin"></span><div class="ph empty-ph">＋ Add the<br>first photos</div><div class="cap"></div></div>`;
+    return `<div class="tl-label"><b>${esc(Z.label(g))}</b><span>${esc(Z.sub(g))}</span></div>
+      ${g.events.length ? `<div class="tl-badge" aria-hidden="true">${icons}</div>` : '<span class="pin"></span>'}
+      <div class="tl-events">${names}</div>
+      <div class="tl-stack" role="button" tabindex="0" aria-label="${esc(`${Z.label(g)}: ${count || 'no photos yet'}`)}">${stack}</div>`;
+  }
+
+  async function viewTimeline(main, { focusDate: jumpDate } = {}) {
+    if (!main.querySelector('.stage')) loading(main);
     const data = await api('/api/timeline');
     state.site = data.site;
     state.days = new Map(data.days.map((d) => [d.date, d]));
@@ -284,31 +349,21 @@
 
     if (!data.days.length) {
       main.innerHTML = `
-        <div class="empty">
+        <div class="tl-board board"><div class="cork"><div class="empty">
           <div class="big">📸</div>
           <h3>The first page is blank</h3>
           <p>Add some photos or mark a special day, and the timeline will start to grow.</p>
           <div class="row" style="justify-content:center"><button class="btn primary" data-act="upload">＋ Add photos</button><button class="btn" data-act="event">Mark an event</button></div>
-        </div>`;
+        </div></div></div>`;
       $('[data-act=upload]', main).onclick = () => openUpload();
       $('[data-act=event]', main).onclick = () => openEventForm();
       return;
     }
 
-    let track = '';
-    let lastMonth = '';
-    for (const d of data.days) {
-      const month = d.date.slice(0, 7);
-      if (month !== lastMonth) {
-        track += `<div class="tl-month" aria-hidden="true"><span>${esc(fmt(`${month}-01`, { month: 'short', year: 'numeric' }))}</span></div>`;
-        lastMonth = month;
-      }
-      track += dayHTML(d);
-    }
-    const photoTotal = data.days.reduce((n, d) => n + d.count, 0);
+    const total = data.days.reduce((n, d) => n + d.count, 0);
     main.innerHTML = `
       <div class="tl-head page-head">
-        <div><h2>Timeline</h2><p>${plural(photoTotal, 'photo')} across ${plural(data.days.length, 'day')}. Scroll sideways to travel through time.</p></div>
+        <div><h2>Timeline</h2><p>${total} ${total === 1 ? 'memory' : 'memories'} so far. Pinch or use − / + to zoom through time.</p></div>
         <div class="tl-tools">
           <label class="tl-jump"><span class="lbl">Jump to</span><input type="date" id="jump" aria-label="Jump to date"></label>
           <button class="btn sm" id="toStart" aria-label="Beginning">⏮<span class="lbl"> Beginning</span></button>
@@ -316,83 +371,297 @@
           <button class="btn sm primary" id="newEvent">＋ <span class="lbl">New </span>Event</button>
         </div>
       </div>
-      <div class="tl-wrap">
-        <button class="btn icon tl-arrow left" aria-label="Scroll back">‹</button>
-        <div class="tl-scroller" id="tl"><div class="tl-track">${track}</div></div>
-        <button class="btn icon tl-arrow right" aria-label="Scroll forward">›</button>
-      </div>`;
+      <div class="tl-board board"><div class="cork">
+        <div class="stage" id="stage"></div>
+        <div class="tl-zoom">
+          <button id="zout" aria-label="Zoom out">−</button>
+          <div class="lvl" id="lvl">${ZOOM_LEVELS.map((Z, i) => `<span data-l="${i}">${Z.name}</span>`).join('')}</div>
+          <button id="zin" aria-label="Zoom in">+</button>
+        </div>
+      </div></div>`;
 
-    const sc = $('#tl', main);
-    sc.style.scrollBehavior = 'auto';
-    sc.scrollLeft = state.tlScroll ?? sc.scrollWidth;
-    sc.style.scrollBehavior = '';
-    sc.addEventListener('scroll', () => { state.tlScroll = sc.scrollLeft; }, { passive: true });
-    // A normal mouse wheel scrolls the timeline sideways.
-    sc.addEventListener('wheel', (e) => {
-      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-      e.preventDefault();
-      sc.scrollBy({ left: e.deltaY * 1.4, behavior: 'instant' });
-    }, { passive: false });
+    const groups = buildGroups(data.days);
+    const stage = $('#stage', main);
+    const vw = () => stage.clientWidth;
+    const xOf = (i) => i * W;
+    const scaleOf = (ff) => Math.pow(G, ff);
+    const containing = (l, date) => {
+      const gs = groups[l];
+      let best = 0;
+      for (let i = 0; i < gs.length; i++) {
+        if (gs[i].start <= date && date <= gs[i].end) return i;
+        if (Math.abs(toDate(gs[i].start) - toDate(date)) < Math.abs(toDate(gs[best].start) - toDate(date))) best = i;
+      }
+      return best;
+    };
 
-    $('.tl-arrow.left', main).onclick = () => sc.scrollBy({ left: -sc.clientWidth * 0.8, behavior: 'smooth' });
-    $('.tl-arrow.right', main).onclick = () => sc.scrollBy({ left: sc.clientWidth * 0.8, behavior: 'smooth' });
-    $('#toStart', main).onclick = () => sc.scrollTo({ left: 0, behavior: 'smooth' });
-    $('#toEnd', main).onclick = () => sc.scrollTo({ left: sc.scrollWidth, behavior: 'smooth' });
-    $('#newEvent', main).onclick = () => openEventForm();
-    $('#jump', main).onchange = (e) => e.target.value && jumpTo(sc, e.target.value);
-
-    $('.tl-track', main).addEventListener('click', (e) => {
-      const stack = e.target.closest('[data-day]');
-      if (stack) return openDay(stack.dataset.day);
-      const add = e.target.closest('[data-add]');
-      if (add) openUpload({ date: add.dataset.add, eventId: Number(add.dataset.event) || undefined });
+    const layers = groups.map((gs, l) => {
+      const el = document.createElement('div');
+      el.className = 'layer';
+      el.items = gs.map((g, i) => {
+        const it = document.createElement('div');
+        it.className = 'stop';
+        it.dataset.l = l; it.dataset.i = i;
+        it.style.display = 'none';
+        it.innerHTML = stackHTML(g, l);
+        el.appendChild(it);
+        return it;
+      });
+      el.shown = [];
+      stage.appendChild(el);
+      return el;
     });
 
-    if (focusDate) jumpTo(sc, focusDate);
-  }
+    // ---- state: L = level, f = progress toward the next finer level, tx = where row L starts on screen
+    let L, f = 0, tx;
+    let pair = null;       // { a: stack at level L, c: matching stack at level L+1 } while blending
+    let focusX = vw() / 2; // screen x the current zoom is centred on
+    let focusDate = null;  // the day you were on, so zooming out and back in returns there
+    const nearestIdx = (l, t, s, x) => Math.max(0, Math.min(groups[l].length - 1, Math.round((x - t) / (s * W))));
+    const save = () => { state.tl = { L, tx, focusDate }; };
 
-  function dayHTML(d) {
-    const label = fmt(d.date, { month: 'short', day: 'numeric' });
-    // Days with events get their emoji right on the line; the names are listed under the date.
-    const icons = d.events.slice(0, 4).map((e) => `<span>${esc(e.emoji || '⭐')}</span>`).join('')
-      + (d.events.length > 4 ? `<small>+${d.events.length - 4}</small>` : '');
-    const marker = d.events.length ? `<span class="tl-badge" aria-hidden="true">${icons}</span>` : '<span class="tl-dot"></span>';
-    const shown = d.events.slice(0, 3);
-    const list = d.events.length ? `
-      <div class="tl-evlist">
-        ${shown.map((e) => `<a href="#/events/${e.id}" title="${esc(e.title)}"><span>${esc(e.emoji || '⭐')}</span><span>${esc(e.title)}</span></a>`).join('')}
-        ${d.events.length > shown.length ? `<button data-day="${d.date}">+${d.events.length - shown.length} more</button>` : ''}
-      </div>` : '';
-    const stack = d.count
-      ? `<button class="tl-stack" data-day="${d.date}" aria-label="See ${plural(d.count, 'photo')} from ${esc(fmtLong(d.date))}">
-           ${d.photos.slice().reverse().map((id) => `<div class="pol"><img loading="lazy" src="/media/thumb/${id}" alt=""></div>`).join('')}
-           <span class="tl-count">${plural(d.count, 'photo')}</span>
-         </button>`
-      : `<button class="tl-empty-stack" data-add="${d.date}" data-event="${d.events[0]?.id || ''}">＋ Add the first photos</button>`;
-    return `
-      <div class="tl-day" data-date="${d.date}">
-        <div class="tl-axis">${marker}</div>
-        <div class="tl-date"><strong>${esc(label)}</strong><small>${esc(age(d.date) || fmt(d.date, { weekday: 'long' }))}</small></div>
-        ${list}
-        ${stack}
-      </div>`;
-  }
+    function makePair() {
+      const a = nearestIdx(L, tx, scaleOf(f), focusX);
+      const g = groups[L][a];
+      const d = focusDate && focusDate >= g.start && focusDate <= g.end ? focusDate : g.start;
+      return { a, c: containing(L + 1, d) };
+    }
 
-  function jumpTo(sc, date) {
-    const days = $$('.tl-day', sc);
-    if (!days.length) return;
-    const el = days.find((d) => d.dataset.date >= date) || days[days.length - 1];
-    sc.scrollTo({ left: el.offsetLeft - sc.clientWidth / 2 + el.offsetWidth / 2, behavior: 'smooth' });
-    el.classList.remove('flash');
-    void el.offsetWidth; // restart the animation
-    el.classList.add('flash');
+    function drawLayer(l, t, s, alpha) {
+      const el = layers[l];
+      el.style.opacity = alpha;
+      const n = el.items.length;
+      const cs = Math.sqrt(s); // stacks grow a bit slower than the spacing between them
+      let i0 = 0, i1 = -1;
+      if (alpha > 0.001) {
+        i0 = Math.max(0, Math.floor((-320 - t) / (s * W)));
+        i1 = Math.min(n - 1, Math.ceil((vw() + 320 - t) / (s * W)));
+      }
+      for (const i of el.shown) if (i < i0 || i > i1) el.items[i].style.display = 'none';
+      el.shown = [];
+      for (let i = i0; i <= i1; i++) {
+        const it = el.items[i];
+        it.style.display = 'flex';
+        it.style.transform = `translate3d(${t + s * xOf(i) - 105}px,0,0) scale(${cs})`;
+        el.shown.push(i);
+      }
+      el.style.pointerEvents = alpha > 0.5 ? '' : 'none';
+    }
+
+    const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+    function render() {
+      const sL = scaleOf(f);
+      const blending = L < MAXL && f > 0;
+      if (blending && (!pair || f < 0.22)) pair = makePair(); // re-pick only while the finer row is invisible
+      const fade = blending ? smooth((f - 0.22) / 0.56) : 0;
+      layers.forEach((el, l) => { if (l !== L && !(blending && l === L + 1)) drawLayer(l, 0, 1, 0); });
+      drawLayer(L, tx, sL, 1 - fade);
+      if (blending) drawLayer(L + 1, tx + sL * xOf(pair.a) - (sL / G) * xOf(pair.c), sL / G, fade);
+      const shownLevel = Math.min(MAXL, Math.max(0, Math.round(L + f)));
+      $$('#lvl span', main).forEach((sp) => sp.classList.toggle('on', +sp.dataset.l === shownLevel));
+      $('#zout', main).disabled = L === 0 && f <= 0;
+      $('#zin', main).disabled = L === MAXL;
+      save();
+    }
+
+    // Zoom by dz levels around screen x F, crossing level boundaries seamlessly.
+    function zoomBy(dz, F) {
+      focusX = F;
+      let guard = 20;
+      while (Math.abs(dz) > 1e-9 && guard--) {
+        if (dz > 0) {
+          const step = Math.min(dz, (L < MAXL ? 1 : F_MAX) - f);
+          if (step > 0) { tx = F - (F - tx) * scaleOf(step); f += step; dz -= step; }
+          if (dz > 1e-9 && L < MAXL && f >= 1 - 1e-9) {          // the finer row takes over
+            if (!pair) pair = makePair();
+            tx = tx + G * xOf(pair.a) - xOf(pair.c);
+            L++; f = 0; pair = null;
+          } else if (step <= 0) break;
+        } else {
+          const step = Math.min(-dz, f - (L > 0 ? 0 : F_MIN));
+          if (step > 0) { tx = F - (F - tx) * scaleOf(-step); f -= step; dz += step; }
+          if (dz < -1e-9 && L > 0 && f <= 1e-9) {                // the coarser row takes over
+            const c = nearestIdx(L, tx, 1, F);
+            if (L === MAXL) focusDate = groups[L][c].start;      // remember the day you zoomed out from
+            const a = containing(L - 1, groups[L][c].start);
+            tx = tx + xOf(c) - G * xOf(a);
+            L--; f = 1; pair = { a, c };
+          } else if (step <= 0) break;
+        }
+      }
+      render();
+    }
+
+    const clampTx = (t) => Math.min(vw() / 2, Math.max(vw() / 2 - scaleOf(f) * xOf(groups[L].length - 1), t));
+    function panBy(dx) { tx = clampTx(tx + dx); render(); }
+
+    // ---- animations
+    let anim = 0;
+    const stopAnim = () => { cancelAnimationFrame(anim); anim = 0; };
+    function tween(ms, frame, done) {
+      stopAnim();
+      const t0 = performance.now();
+      const step = (now) => {
+        if (!stage.isConnected) return;
+        const p = Math.min(1, (now - t0) / ms);
+        frame(1 - Math.pow(1 - p, 3));
+        if (p < 1) anim = requestAnimationFrame(step); else { anim = 0; done?.(); }
+      };
+      anim = requestAnimationFrame(step);
+    }
+    function animateZoom(targetZ, F = vw() / 2, ms) {
+      const dist = targetZ - (L + f);
+      if (Math.abs(dist) < 1e-4) return;
+      let done = 0;
+      tween(ms || Math.min(900, 300 + 260 * Math.abs(dist)), (e) => { zoomBy(dist * e - done, F); done = dist * e; });
+    }
+    const settle = (F = focusX) => animateZoom(Math.max(0, Math.min(MAXL, Math.round(L + f))), F, 260);
+    function panTo(target) {
+      const from = tx;
+      target = clampTx(target);
+      tween(450, (e) => { tx = from + (target - from) * e; render(); });
+    }
+    function glide(v) {                                   // momentum after a flick
+      stopAnim();
+      let last = performance.now();
+      const step = (now) => {
+        if (!stage.isConnected) return;
+        const dt = Math.min(32, now - last); last = now;
+        panBy(v * dt);
+        v *= Math.pow(0.94, dt / 16);
+        if (Math.abs(v) > 0.02) anim = requestAnimationFrame(step); else anim = 0;
+      };
+      anim = requestAnimationFrame(step);
+    }
+    // Show a date at Days level, centred.
+    function goToDate(date) {
+      stopAnim();
+      L = MAXL; f = 0; pair = null;
+      const i = containing(MAXL, date);
+      focusDate = groups[MAXL][i].start;
+      tx = vw() / 2 - xOf(i);
+      render();
+    }
+
+    // ---- where to start: where you left off, a requested date, or the latest memories
+    const span = (toDate(data.days[data.days.length - 1].date) - toDate(data.days[0].date)) / 864e5;
+    if (jumpDate) goToDate(jumpDate);
+    else if (state.tl && state.tl.L <= MAXL) { L = state.tl.L; tx = state.tl.tx; focusDate = state.tl.focusDate; tx = clampTx(tx); render(); }
+    else {
+      L = span < 45 ? 3 : span < 200 ? 2 : 1;
+      tx = Math.min(vw() / 2, vw() - 150 - xOf(groups[L].length - 1));
+      render();
+    }
+
+    // ---- controls
+    $('#zin', main).onclick = () => animateZoom(Math.min(MAXL, Math.round(L + f) + 1));
+    $('#zout', main).onclick = () => animateZoom(Math.max(0, Math.round(L + f) - 1));
+    $$('#lvl span', main).forEach((sp) => { sp.onclick = () => animateZoom(+sp.dataset.l); });
+    $('#toStart', main).onclick = () => panTo(vw() / 2);
+    $('#toEnd', main).onclick = () => panTo(-Infinity);
+    $('#newEvent', main).onclick = () => openEventForm();
+    $('#jump', main).onchange = (e) => e.target.value && goToDate(e.target.value);
+
+    // Tap a stack: months/weeks/years dive in; a day opens its photos.
+    stage.addEventListener('click', (e) => {
+      const stack = e.target.closest('.tl-stack');
+      const it = stack?.closest('.stop');
+      if (!it || +it.dataset.l !== L) return;
+      const i = +it.dataset.i;
+      const g = groups[L][i];
+      if (L < MAXL) {
+        focusDate = g.start;
+        animateZoom(L + 1, tx + scaleOf(f) * xOf(i));
+      } else if (e.target.closest('[data-add]')) {
+        openUpload({ date: g.start, eventId: g.events[0]?.id });
+      } else openDay(g.start);
+    });
+    stage.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.classList.contains('tl-stack')) e.target.click(); });
+
+    const localX = (clientX) => clientX - stage.getBoundingClientRect().left;
+
+    // Mouse wheel / trackpad: scroll moves, ctrl + scroll or a trackpad pinch zooms.
+    let wheelTimer = 0;
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      stopAnim();
+      if (e.ctrlKey) {
+        zoomBy(-e.deltaY * 0.012, localX(e.clientX));
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(() => settle(), 160);
+      } else {
+        panBy(-(Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY));
+      }
+    }, { passive: false });
+
+    // Dragging / swiping with one finger or the mouse, with momentum.
+    const pointers = new Set();
+    let drag = null;
+    let justDragged = false;
+    stage.addEventListener('pointerdown', (e) => {
+      pointers.add(e.pointerId);
+      if (pointers.size > 1) { drag = null; return; }
+      stopAnim();
+      drag = { x: e.clientX, t: performance.now(), v: 0, moved: false, id: e.pointerId };
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id || pointers.size > 1) return;
+      const dx = e.clientX - drag.x;
+      if (!drag.moved && Math.abs(dx) < 6) return;
+      if (!drag.moved) { drag.moved = true; stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId); }
+      const now = performance.now();
+      drag.v = 0.8 * (dx / Math.max(1, now - drag.t)) + 0.2 * drag.v;
+      drag.x = e.clientX; drag.t = now;
+      panBy(dx);
+    });
+    const endPointer = (e) => {
+      pointers.delete(e.pointerId);
+      if (!drag || e.pointerId !== drag.id) return;
+      if (drag.moved) {
+        justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+        if (performance.now() - drag.t < 80) glide(drag.v);
+        // wandered to another stack? forget the remembered day
+        const g = groups[L][nearestIdx(L, tx, scaleOf(f), vw() / 2)];
+        if (focusDate && (focusDate < g.start || focusDate > g.end)) focusDate = null;
+      }
+      drag = null;
+      stage.classList.remove('dragging');
+    };
+    stage.addEventListener('pointerup', endPointer);
+    stage.addEventListener('pointercancel', endPointer);
+    stage.addEventListener('click', (e) => { if (justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+    // Two-finger pinch zooms (and pans with the fingers' midpoint), like Photos.
+    let pinch = null;
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t) => localX((t[0].clientX + t[1].clientX) / 2);
+    stage.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 2) return;
+      stopAnim(); drag = null;
+      pinch = { d: dist(e.touches), m: mid(e.touches) };
+    }, { passive: true });
+    stage.addEventListener('touchmove', (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const d = dist(e.touches);
+      const m = mid(e.touches);
+      tx += m - pinch.m;
+      zoomBy(Math.log(d / pinch.d) / Math.log(G), m);
+      pinch.d = d; pinch.m = m;
+    }, { passive: false });
+    stage.addEventListener('touchend', (e) => { if (pinch && e.touches.length < 2) { pinch = null; settle(); } });
+    stage.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: don't zoom the page
+
+    // Keep things lined up if the window is resized or the phone rotated.
+    const ro = new ResizeObserver(() => { if (stage.isConnected) { tx = clampTx(tx); render(); } else ro.disconnect(); });
+    ro.observe(stage);
   }
 
   async function openDay(date) {
     let photos;
     try { photos = await api(`/api/photos?date=${date}`); } catch (e) { return oops(e); }
     const events = state.days.get(date)?.events || [];
-    const sub = [age(date), plural(events.length, 'event'), plural(photos.length, 'photo')].filter((s) => s && !s.startsWith('0 ')).join(' · ');
+    const sub = [age(date), plural(events.length, 'event'), mediaCount(photos)].filter((s) => s && !s.startsWith('0 ')).join(' · ');
     // One section per event (with its own photos), then whatever else happened that day.
     const sections = events.map((e) => ({ event: e, photos: photos.filter((p) => p.eventId === e.id) }));
     const loose = photos.filter((p) => !events.some((e) => e.id === p.eventId));
@@ -418,12 +687,26 @@
 
   // ---------------------------------------------------------------- photo grid & viewer
 
+  // A small, stable tilt per item so polaroids look hand-pinned (same tilt every time you visit).
+  const tilt = (id) => `${((id * 37) % 7) - 3}deg`;
+  const mediaCount = (items) => {
+    const v = items.filter((p) => p.kind === 'video').length;
+    return [items.length - v && plural(items.length - v, 'photo'), v && plural(v, 'video')].filter(Boolean).join(' · ') || '0 photos';
+  };
+  const videoBadge = (p) => (p.kind !== 'video' ? ''
+    : p.status === 'processing' ? '<span class="play">▶</span><span class="processing">Converting…</span>'
+    : `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}`);
+
   function photoGrid(photos, showEvent = false) {
     return `<div class="photo-grid">${photos.map((p, i) => `
-      <button data-i="${i}" aria-label="Open photo${p.caption ? `: ${esc(p.caption)}` : ''}">
-        <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
-        ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
-        ${showEvent && p.eventTitle ?`<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
+      <button data-i="${i}" style="--r:${tilt(p.id)}" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}${p.caption ? `: ${esc(p.caption)}` : ''}">
+        <span class="ph">
+          <img loading="lazy" src="/media/thumb/${p.id}" width="${p.width || 4}" height="${p.height || 3}" alt="${esc(p.caption || '')}">
+          ${videoBadge(p)}
+          ${p.restricted ? '<span class="lock" title="Private">🔒</span>' : ''}
+          ${showEvent && p.eventTitle ? `<span class="tag">${esc(`${p.eventEmoji || '⭐'} ${p.eventTitle}`)}</span>` : ''}
+        </span>
+        <span class="cap">${esc(p.caption || '')}</span>
       </button>`).join('')}</div>`;
   }
   function bindGrid(el, photos, ctx) {
@@ -467,11 +750,20 @@
       const mine = state.user.isAdmin || p.uploadedBy === state.user.id;
       const ev = ctx.event;
       const meta = [p.restricted && '🔒 Private', fmtLong(p.date), p.eventTitle && `${p.eventEmoji || '⭐'} ${p.eventTitle}`, `added by ${p.uploaderName || 'a former member'}`].filter(Boolean).join(' · ');
+      const isVideo = p.kind === 'video';
+      const ready = !isVideo || p.status === 'ready';
+      const media = !isVideo
+        ? `<img src="/media/full/${p.id}" alt="${esc(p.caption || '')}">`
+        : ready
+          ? `<video src="/media/video/${p.id}" poster="/media/full/${p.id}" controls autoplay playsinline></video>`
+          : `<img src="/media/full/${p.id}" alt=""><div class="lb-note">${p.status === 'failed'
+              ? 'This video couldn’t be converted. Try uploading it again.'
+              : 'This video is still being converted so it plays everywhere — check back in a minute.'}</div>`;
       lb.innerHTML = `
         <div class="lb-top">
           <span class="count">${i + 1} / ${photos.length}</span>
           <div class="row">
-            <a class="btn sm" href="/media/full/${p.id}?download=1">⬇ Download</a>
+            ${ready ? `<a class="btn sm" href="/media/${isVideo ? 'video' : 'full'}/${p.id}?download=1">⬇ Download</a>` : ''}
             ${ev?.canEdit ? `<button class="btn sm" data-cover>${ev.coverId === p.id ? '★ Cover photo' : '☆ Make cover'}</button>` : ''}
             ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
             <button class="btn icon" data-x aria-label="Close">✕</button>
@@ -479,7 +771,7 @@
         </div>
         <div class="lb-stage">
           ${photos.length > 1 ? '<button class="lb-nav prev" aria-label="Previous">‹</button>' : ''}
-          <img src="/media/full/${p.id}" alt="${esc(p.caption || '')}">
+          ${media}
           ${photos.length > 1 ? '<button class="lb-nav next" aria-label="Next">›</button>' : ''}
         </div>
         <div class="lb-bottom"><div>
@@ -491,8 +783,8 @@
       stage.onclick = (e) => { if (e.target === stage && !lb.classList.contains('zoomed')) close(); };
       // Click the photo to see it at full size (scroll to pan); click again to fit it back on screen.
       lb.classList.remove('zoomed');
-      const photo = $('img', stage);
-      photo.onclick = (e) => {
+      const photo = isVideo ? null : $('img', stage);
+      if (photo) photo.onclick = (e) => {
         const fx = e.offsetX / photo.clientWidth; // where on the photo was clicked, measured before zooming
         const fy = e.offsetY / photo.clientHeight;
         if (lb.classList.toggle('zoomed')) {
@@ -503,7 +795,7 @@
       if (photos.length > 1) {
         $('.prev', lb).onclick = () => go(-1);
         $('.next', lb).onclick = () => go(1);
-        [1, -1].forEach((n) => { new Image().src = `/media/full/${photos[(i + n + photos.length) % photos.length].id}`; });
+        [1, -1].forEach((n) => { new Image().src = `/media/full/${photos[(i + n + photos.length) % photos.length].id}`; }); // preload neighbours (posters for videos)
       }
       const cover = $('[data-cover]', lb);
       if (cover) cover.onclick = async () => {
@@ -610,7 +902,7 @@
     let members;
     try { [events, members] = await Promise.all([api('/api/events'), api('/api/members')]); } catch (e) { return oops(e); }
     const m = modal(`
-      ${head('Add photos', 'Choose a day, and who gets to see them.')}
+      ${head('Add photos & videos', 'Choose a day, and who gets to see them.')}
       <form class="form">
         <div class="grid-2">
           <label class="field">Which day?<input type="date" name="date" required></label>
@@ -622,9 +914,9 @@
           </label>
         </div>
         <label class="drop">
-          <input type="file" accept="image/*" multiple hidden>
+          <input type="file" accept="image/*,video/*" multiple hidden>
           <div class="big">📷</div>
-          <div>Tap to choose photos, or drag them here</div>
+          <div>Tap to choose photos or videos, or drag them here</div>
         </label>
         <div class="previews"></div>
         <label class="field">Note <span class="hint">Optional — added to every photo in this batch</span>
@@ -654,12 +946,17 @@
     syncEvent();
     eventSel.onchange = syncEvent;
 
+    const isVid = (f) => f.type.startsWith('video/');
     const showFiles = () => {
-      previews.querySelectorAll('img').forEach((img) => URL.revokeObjectURL(img.src));
-      previews.innerHTML = files.map((f, i) => `<div><img src="${URL.createObjectURL(f)}" alt=""><button type="button" data-rm="${i}" aria-label="Remove">✕</button></div>`).join('');
-      submit.textContent = files.length ? `Upload ${plural(files.length, 'photo')}` : 'Upload';
+      previews.querySelectorAll('img, video').forEach((el) => URL.revokeObjectURL(el.src));
+      previews.innerHTML = files.map((f, i) => `<div>${isVid(f)
+        ? `<video src="${URL.createObjectURL(f)}#t=0.5" muted playsinline preload="metadata"></video><span class="play" style="width:26px;height:26px;margin:-13px 0 0 -13px;font-size:11px">▶</span>`
+        : `<img src="${URL.createObjectURL(f)}" alt="">`}<button type="button" data-rm="${i}" aria-label="Remove">✕</button></div>`).join('');
+      const v = files.filter(isVid).length;
+      const p = files.length - v;
+      submit.textContent = files.length ? `Upload ${[p && plural(p, 'photo'), v && plural(v, 'video')].filter(Boolean).join(' and ')}` : 'Upload';
     };
-    const addFiles = (list) => { files = files.concat([...list].filter((f) => f.type.startsWith('image/'))); showFiles(); };
+    const addFiles = (list) => { files = files.concat([...list].filter((f) => /^(image|video)\//.test(f.type))); showFiles(); };
     fileIn.onchange = () => { addFiles(fileIn.files); fileIn.value = ''; };
     previews.onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { files.splice(Number(b.dataset.rm), 1); showFiles(); } };
     ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
@@ -667,7 +964,7 @@
     drop.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
 
     onSubmit(form, async () => {
-      if (!files.length) throw new Error('Choose at least one photo.');
+      if (!files.length) throw new Error('Choose at least one photo or video.');
       const access = readAccess();
       const bar = $('.progress', form);
       bar.classList.remove('hidden');
@@ -675,9 +972,11 @@
       let done = 0;
       let saved = 0;
       const failed = [];
-      // Send a few at a time so big batches from a phone don't time out.
-      for (let i = 0; i < files.length; i += 4) {
-        const batch = files.slice(i, i + 4);
+      // Send photos a few at a time and each video on its own, so big batches from a phone don't time out.
+      const photosOnly = files.filter((f) => !isVid(f));
+      const batches = [...files.filter(isVid).map((v) => [v])];
+      for (let i = 0; i < photosOnly.length; i += 4) batches.unshift(photosOnly.slice(i, i + 4));
+      for (const batch of batches) {
         const fd = new FormData();
         fd.append('date', dateIn.value);
         if (eventSel.value) fd.append('eventId', eventSel.value);
@@ -695,7 +994,7 @@
         failed.push(...res.failed);
       }
       m.close();
-      toast(`${plural(saved, 'photo')} added 🎉`);
+      toast(`${saved} ${saved === 1 ? 'memory' : 'memories'} added 🎉${files.some(isVid) ? ' Videos will be ready to play in a minute or two.' : ''}`);
       if (failed.length) toast(`Couldn’t read: ${failed.join(', ')}`, true);
       const [tab] = currentRoute();
       route(tab === 'timeline' ? { focusDate: dateIn.value } : {});
@@ -764,12 +1063,15 @@
         <div><h2>Events</h2><p>The big moments and the little firsts.</p></div>
         <button class="btn primary" id="newEvent">＋ New event</button>
       </div>
+      <div class="board"><div class="cork">
       ${events.length ? `<div class="ev-grid">${events.map((e) => `
-        <a class="ev-card" href="#/events/${e.id}">
+        <a class="ev-card" href="#/events/${e.id}" style="--r:${tilt(e.id)}">
+          <span class="pin"></span>
           <div class="ev-thumb">${e.coverId ? `<img loading="lazy" src="/media/thumb/${e.coverId}" alt="">` : esc(e.emoji || '⭐')}</div>
-          <div class="ev-title">${e.emoji ? `<span>${esc(e.emoji)}</span>` : ''}<span>${esc(e.title)}</span></div>
+          <div class="ev-title">${esc(`${e.emoji ? `${e.emoji} ` : ''}${e.title}`)}</div>
         </a>`).join('')}</div>`
-        : '<div class="empty"><div class="big">🎈</div><h3>No events yet</h3><p>Mark birthdays, firsts and visits so they stand out on the timeline.</p></div>'}`;
+        : '<div class="empty"><div class="big">🎈</div><h3>No events yet</h3><p>Mark birthdays, firsts and visits so they stand out on the timeline.</p></div>'}
+      </div></div>`;
     $('#newEvent', main).onclick = () => openEventForm();
   }
 
@@ -782,7 +1084,7 @@
       return;
     }
     const { event: ev, photos } = data;
-    const sub = [fmtLong(ev.date), age(ev.date), plural(photos.length, 'photo')].filter(Boolean).join(' · ');
+    const sub = [fmtLong(ev.date), age(ev.date), mediaCount(photos)].filter(Boolean).join(' · ');
     main.innerHTML = `
       <a class="back" href="#/events">← All events</a>
       <div class="ev-hero">
@@ -797,7 +1099,9 @@
           ${ev.canEdit ? '<button class="btn sm" data-act="edit">✎ Edit</button><button class="btn sm danger" data-act="del">Delete</button>' : ''}
         </div>
       </div>
-      ${photos.length ? photoGrid(photos) : '<div class="empty"><div class="big">📷</div><h3>No photos yet</h3><p>Be the first to add some from this day.</p></div>'}`;
+      <div class="board"><div class="cork">
+        ${photos.length ? photoGrid(photos) : '<div class="empty"><div class="big">📷</div><h3>Nothing pinned yet</h3><p>Be the first to add photos or videos from this day.</p></div>'}
+      </div></div>`;
     $('[data-act=add]', main).onclick = () => openUpload({ eventId: ev.id });
     $('[data-act=edit]', main)?.addEventListener('click', () => openEventForm(ev));
     $('[data-act=del]', main)?.addEventListener('click', async () => {

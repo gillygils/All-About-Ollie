@@ -6,6 +6,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
+const { spawn, spawnSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const express = require('express');
 const multer = require('multer');
@@ -15,11 +16,19 @@ const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const DIRS = {
   full: path.join(DATA_DIR, 'photos'),     // resized, metadata-stripped copies (what people see)
-  thumb: path.join(DATA_DIR, 'thumbs'),
+  thumb: path.join(DATA_DIR, 'thumbs'),     // also video poster frames
+  video: path.join(DATA_DIR, 'videos'),     // converted MP4s every browser can play
   orig: path.join(DATA_DIR, 'originals'),  // untouched uploads, never served — your backup
   tmp: path.join(DATA_DIR, 'tmp'),
 };
 for (const d of [DATA_DIR, ...Object.values(DIRS)]) fs.mkdirSync(d, { recursive: true });
+
+// Video support needs ffmpeg (thumbnails + converting e.g. iPhone HEVC to H.264).
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFPROBE = process.env.FFPROBE_PATH || 'ffprobe';
+const HAS_FFMPEG = !spawnSync(FFMPEG, ['-version']).error && !spawnSync(FFPROBE, ['-version']).error;
+const MAX_PHOTO_BYTES = 40 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
 
 const DAY = 24 * 60 * 60 * 1000;
 const SESSION_TTL = 30 * DAY;
@@ -95,8 +104,12 @@ function tx(fn) {
 }
 
 // Older databases predate private photos.
-if (!all('PRAGMA table_info(photos)').some((c) => c.name === 'restricted')) {
-  db.exec('ALTER TABLE photos ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0');
+const photoColumns = all('PRAGMA table_info(photos)').map((c) => c.name);
+if (!photoColumns.includes('restricted')) db.exec('ALTER TABLE photos ADD COLUMN restricted INTEGER NOT NULL DEFAULT 0');
+if (!photoColumns.includes('kind')) {
+  db.exec(`ALTER TABLE photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo';
+           ALTER TABLE photos ADD COLUMN duration REAL;
+           ALTER TABLE photos ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';`);
 }
 
 // A private (restricted) photo is visible only to its uploader and the people on its access list.
@@ -360,7 +373,7 @@ app.post('/api/logout', (req, res) => {
 
 const PHOTO_SELECT = `
   SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height, p.restricted,
-         p.uploaded_by AS uploadedBy, u.display_name AS uploaderName, p.created_at AS createdAt,
+         p.kind, p.duration, p.status, p.uploaded_by AS uploadedBy, u.display_name AS uploaderName, p.created_at AS createdAt,
          e.title AS eventTitle, e.emoji AS eventEmoji
   FROM photos p
   LEFT JOIN users u ON u.id = p.uploaded_by
@@ -370,13 +383,17 @@ app.get('/api/timeline', needUser, (req, res) => {
   const days = new Map();
   const day = (date) => {
     let d = days.get(date);
-    if (!d) days.set(date, (d = { date, count: 0, photos: [], events: [] }));
+    if (!d) days.set(date, (d = { date, count: 0, photoCount: 0, videoCount: 0, previews: [], events: [] }));
     return d;
   };
-  for (const p of all(`SELECT p.id, p.date FROM photos p WHERE ${VISIBLE} ORDER BY p.date, p.id`, { uid: req.user.id })) {
+  // Up to 3 previews per day for the polaroid stack — videos first, so one is always on top if there is one.
+  const rows = all(`SELECT p.id, p.date, p.kind, p.duration, p.caption FROM photos p WHERE ${VISIBLE}
+                    ORDER BY p.date, (p.kind = 'video') DESC, p.id`, { uid: req.user.id });
+  for (const p of rows) {
     const d = day(p.date);
     d.count++;
-    if (d.photos.length < 3) d.photos.push(p.id);
+    if (p.kind === 'video') d.videoCount++; else d.photoCount++;
+    if (d.previews.length < 3) d.previews.push({ id: p.id, kind: p.kind, duration: p.duration, caption: p.caption });
   }
   for (const e of all('SELECT id, title, date, emoji FROM events ORDER BY date, id')) day(e.date).events.push(e);
   res.json({ site: siteInfo(), days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)) });
@@ -410,9 +427,74 @@ function setAccess(photoId, restricted, allowed) {
 
 const upload = multer({
   dest: DIRS.tmp,
-  limits: { fileSize: 40 * 1024 * 1024, files: 20 },
-  fileFilter: (req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+  limits: { fileSize: MAX_VIDEO_BYTES, files: 20 },
+  fileFilter: (req, file, cb) => cb(null, /^(image|video)\//.test(file.mimetype)),
 });
+
+// ---- video helpers
+
+function runTool(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { windowsHide: true });
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
+    p.on('error', reject);
+    p.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`${path.basename(cmd)} exited ${code}: ${err.trim().split('\n').pop()}`))));
+  });
+}
+
+async function probeDuration(file) {
+  const out = await runTool(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', file]);
+  return Number(JSON.parse(out).format?.duration) || null;
+}
+
+// Grab a frame for the polaroid/thumbnail, saved exactly like a photo so /media/thumb and /media/full work.
+async function makePoster(file, name, duration) {
+  const frame = path.join(DIRS.tmp, `${name}-poster.jpg`);
+  const at = duration ? Math.min(1, duration / 2) : 0;
+  await runTool(FFMPEG, ['-v', 'error', '-y', '-ss', String(at), '-i', file, '-frames:v', '1', '-q:v', '3', frame]);
+  try {
+    const info = await sharp(frame).resize({ width: 1920, height: 1920, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 86, mozjpeg: true }).toFile(path.join(DIRS.full, `${name}.jpg`));
+    await sharp(frame).resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 78 }).toFile(path.join(DIRS.thumb, `${name}.webp`));
+    return info;
+  } finally {
+    fs.rm(frame, { force: true }, () => {});
+  }
+}
+
+// Converts to H.264/AAC MP4 (plays everywhere, streams from the start), max 1080p, and strips
+// metadata such as GPS location. One at a time so the server stays responsive.
+let videoQueue = Promise.resolve();
+function queueConversion(photoId) {
+  videoQueue = videoQueue.then(async () => {
+    const v = get('SELECT id, file FROM photos WHERE id = ?', photoId);
+    if (!v) return;
+    const src = fs.readdirSync(DIRS.orig).find((f) => f.startsWith(v.file));
+    const out = path.join(DIRS.video, `${v.file}.mp4`);
+    const partial = `${out}.part.mp4`;
+    try {
+      await runTool(FFMPEG, [
+        '-v', 'error', '-y', '-i', path.join(DIRS.orig, src),
+        '-map', '0:v:0', '-map', '0:a:0?', '-map_metadata', '-1',
+        '-vf', "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'",
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', partial,
+      ]);
+      await fs.promises.rename(partial, out);
+      run("UPDATE photos SET status = 'ready' WHERE id = ?", v.id);
+    } catch (err) {
+      console.warn(`Could not convert video ${v.id}:`, err.message);
+      fs.rm(partial, { force: true }, () => {});
+      run("UPDATE photos SET status = 'failed' WHERE id = ?", v.id);
+    }
+  });
+}
+// Pick up conversions interrupted by a restart.
+for (const v of all("SELECT id FROM photos WHERE kind = 'video' AND status = 'processing'")) queueConversion(v.id);
 
 app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) => {
   const files = req.files || [];
@@ -425,41 +507,58 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
     date = ev.date; // photos in an event always live on the event's day
   }
   if (!isDate(date)) { files.forEach(discard); return fail(res, 'Pick a date for these photos.'); }
-  if (!files.length) return fail(res, 'Choose at least one photo.');
+  if (!files.length) return fail(res, 'Choose at least one photo or video.');
 
   const caption = text(req.body.caption, 500) || null;
   const restricted = req.body.restricted === '1';
   const allowed = restricted ? readAllowed(req.body.allowed, req.user.id) : [];
+  const insert = (name, info, kind, duration) => tx(() => {
+    const r = run(
+      `INSERT INTO photos(file, date, event_id, caption, width, height, uploaded_by, kind, duration, status)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      name, date, eventId, caption, info.width, info.height, req.user.id, kind, duration,
+      kind === 'video' ? 'processing' : 'ready',
+    );
+    const pid = Number(r.lastInsertRowid);
+    if (restricted) setAccess(pid, true, allowed);
+    return pid;
+  });
+
   const saved = [];
   const failed = [];
   for (const f of files) {
     const name = crypto.randomBytes(12).toString('hex');
+    const ext = path.extname(f.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 8);
+    const isVideo = f.mimetype.startsWith('video/');
     try {
-      // .rotate() applies the phone's orientation; sharp drops EXIF (incl. GPS location) from outputs.
-      const info = await sharp(f.path, { failOn: 'none' }).rotate()
-        .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 86, mozjpeg: true })
-        .toFile(path.join(DIRS.full, `${name}.jpg`));
-      await sharp(f.path, { failOn: 'none' }).rotate()
-        .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 78 })
-        .toFile(path.join(DIRS.thumb, `${name}.webp`));
-      const ext = path.extname(f.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 8);
-      await fs.promises.rename(f.path, path.join(DIRS.orig, name + ext));
-      const photoId = tx(() => {
-        const r = run(
-          'INSERT INTO photos(file, date, event_id, caption, width, height, uploaded_by) VALUES(?, ?, ?, ?, ?, ?, ?)',
-          name, date, eventId, caption, info.width, info.height, req.user.id,
-        );
-        const pid = Number(r.lastInsertRowid);
-        if (restricted) setAccess(pid, true, allowed);
-        return pid;
-      });
-      saved.push(photoId);
+      if (isVideo) {
+        if (!HAS_FFMPEG) throw Object.assign(new Error('no ffmpeg'), { reason: 'videos need ffmpeg installed on the server' });
+        const orig = path.join(DIRS.orig, name + ext);
+        await fs.promises.rename(f.path, orig);
+        const duration = await probeDuration(orig);
+        const info = await makePoster(orig, name, duration);
+        const vid = insert(name, info, 'video', duration);
+        queueConversion(vid);
+        saved.push(vid);
+      } else {
+        if (f.size > MAX_PHOTO_BYTES) throw Object.assign(new Error('too big'), { reason: 'over 40 MB' });
+        // .rotate() applies the phone's orientation; sharp drops EXIF (incl. GPS location) from outputs.
+        const info = await sharp(f.path, { failOn: 'none' }).rotate()
+          .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 86, mozjpeg: true })
+          .toFile(path.join(DIRS.full, `${name}.jpg`));
+        await sharp(f.path, { failOn: 'none' }).rotate()
+          .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 78 })
+          .toFile(path.join(DIRS.thumb, `${name}.webp`));
+        await fs.promises.rename(f.path, path.join(DIRS.orig, name + ext));
+        saved.push(insert(name, info, 'photo', null));
+      }
     } catch (err) {
       console.warn(`Could not process ${f.originalname}:`, err.message);
-      failed.push(f.originalname);
+      failed.push(err.reason ? `${f.originalname} (${err.reason})` : f.originalname);
       discard(f);
+      fs.rm(path.join(DIRS.orig, name + ext), { force: true }, () => {});
       fs.rm(path.join(DIRS.full, `${name}.jpg`), { force: true }, () => {});
       fs.rm(path.join(DIRS.thumb, `${name}.webp`), { force: true }, () => {});
     }
@@ -515,25 +614,31 @@ app.delete('/api/photos/:id', needUser, async (req, res) => {
   run('DELETE FROM photos WHERE id = ?', photo.id);
   await fs.promises.rm(path.join(DIRS.full, `${photo.file}.jpg`), { force: true });
   await fs.promises.rm(path.join(DIRS.thumb, `${photo.file}.webp`), { force: true });
+  await fs.promises.rm(path.join(DIRS.video, `${photo.file}.mp4`), { force: true });
   for (const f of await fs.promises.readdir(DIRS.orig)) {
     if (f.startsWith(photo.file)) await fs.promises.rm(path.join(DIRS.orig, f), { force: true });
   }
   res.json({ ok: true });
 });
 
-// Images are only ever served to people who passed both locks.
+// Images and videos are only ever served to people who passed both locks.
+// (For a video, "full" and "thumb" are its poster frame.)
 app.get('/media/:kind/:id', needUser, (req, res) => {
   const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return res.sendStatus(404);
   let file;
+  let download = `photo-${photo.id}.jpg`;
   if (req.params.kind === 'thumb') file = path.join(DIRS.thumb, `${photo.file}.webp`);
   else if (req.params.kind === 'full') file = path.join(DIRS.full, `${photo.file}.jpg`);
-  else return res.sendStatus(404);
+  else if (req.params.kind === 'video' && photo.kind === 'video' && photo.status === 'ready') {
+    file = path.join(DIRS.video, `${photo.file}.mp4`);
+    download = `video-${photo.id}.mp4`;
+  } else return res.sendStatus(404);
   // no-cache: browsers keep a copy but must re-ask (cheaply, via ETag) each time, so a photo made
   // private — or a shared device where someone else logs in — never shows from cache.
   res.set('Cache-Control', 'private, no-cache');
-  if (req.query.download) res.attachment(`photo-${photo.id}.jpg`);
-  res.sendFile(file);
+  if (req.query.download) res.attachment(download);
+  res.sendFile(file); // handles Range requests, so videos can seek and stream
 });
 
 // ---------------------------------------------------------------- events
@@ -707,7 +812,7 @@ app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }))
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'One of those photos is over 40 MB.' : `Upload problem: ${err.message}`;
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'One of those files is over 2 GB.' : `Upload problem: ${err.message}`;
     return fail(res, msg, 400);
   }
   console.error(err);
@@ -716,4 +821,5 @@ app.use((err, req, res, next) => {
 });
 
 ensureSetupCode();
+if (!HAS_FFMPEG) console.log('  Note: ffmpeg not found, so video uploads are turned off. Install ffmpeg to enable them.\n');
 app.listen(PORT, () => console.log(`  Family Scrapbook running at http://localhost:${PORT}\n`));

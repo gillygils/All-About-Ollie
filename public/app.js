@@ -549,7 +549,7 @@
     if (multi) {
       stack = order.map((evId, depth) => {
         const be = g.byEvent.find((b) => b.eventId === evId);
-        return `<div class="ev-layer${depth ? '' : ' front'}" data-ev="${evId}" style="--d:${depth}">${pile(be.previews, countOf(be))}</div>`;
+        return `<div class="ev-layer${depth ? '' : ' front'}" data-ev="${evId}" data-d="${Math.min(depth, 3)}">${pile(be.previews, countOf(be))}</div>`;
       }).join('') + `<button class="ev-cycle" type="button" aria-label="Show the next event’s photos">${g.byEvent.findIndex((b) => b.eventId === order[0]) + 1} of ${order.length} ↻</button>`;
     } else if (top) {
       stack = pile(stackOf, count);
@@ -870,7 +870,7 @@
       const order = eventOrder(g);
       $$('.ev-layer', stopEl).forEach((layer) => {
         const d = order.indexOf(+layer.dataset.ev);
-        layer.style.setProperty('--d', d);
+        layer.dataset.d = Math.min(d, 3);
         layer.classList.toggle('front', d === 0);
       });
       $$('.tl-badge [data-ev], .tl-events [data-ev]', stopEl).forEach((x) => x.classList.toggle('active', +x.dataset.ev === evId));

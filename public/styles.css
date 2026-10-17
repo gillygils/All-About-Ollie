@@ -262,13 +262,15 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .stop.flip .tl-badge { margin: 0 0 6px; }
 .stop.flip .tl-label { margin-top: 2px; }
 
-/* Several events on one day: one stack per event, piled up; the one in front is highlighted */
-.ev-layer {
-  position: absolute; inset: 0; z-index: calc(10 - var(--d, 0));
-  transform: translate(calc(var(--d, 0) * 16px), calc(var(--d, 0) * -12px)) rotate(calc(var(--d, 0) * 5deg)) scale(calc(1 - var(--d, 0) * .07));
-  transition: transform .35s cubic-bezier(.2, .8, .2, 1), filter .35s;
-}
-.ev-layer:not(.front) { filter: brightness(.8) saturate(.85); }
+/* Several events on one day: each event is its own little pinned stack. The front one sits in the middle;
+   the next ones are fanned out to either side behind it, tilted, showing just their top photo and its pin. */
+.ev-layer { position: absolute; inset: 0; z-index: 10; transition: transform .4s cubic-bezier(.2, .8, .2, 1), filter .4s, opacity .4s; }
+.ev-layer[data-d="1"] { z-index: 9; transform: translate(-66px, -16px) rotate(-10deg) scale(.82); }
+.ev-layer[data-d="2"] { z-index: 8; transform: translate(66px, -12px) rotate(9deg) scale(.8); }
+.ev-layer[data-d="3"] { z-index: 7; transform: translate(0, -40px) rotate(2deg) scale(.76); opacity: 0; }
+.ev-layer .a, .ev-layer .b { transition: opacity .3s, visibility .3s; }
+.ev-layer:not(.front) .a, .ev-layer:not(.front) .b, .ev-layer.front .a { opacity: 0; visibility: hidden; } /* the front event keeps one photo tucked behind; its left one would sit on the next event */
+.ev-layer:not(.front) { filter: brightness(.85) saturate(.9); }
 .ev-layer:not(.front) .tl-tag { display: none; }
 .tl-stack.multi { touch-action: none; } /* lets a vertical swipe on it cycle events instead of scrolling */
 .ev-cycle {

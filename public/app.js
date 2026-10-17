@@ -485,8 +485,17 @@
     const reachR = block.r === half ? 70 : 150;
     const a = j * 2.39996 + rnd() * 0.9;                 // golden-angle spiral out from the date
     const r = 0.25 + 0.75 * Math.sqrt((j + rnd() * 0.6) / 7);
-    const x = Math.max(-reachL, Math.min(reachR, Math.cos(a) * r * 150));
-    const y = Math.max(top, Math.min(bottom, (top + bottom) / 2 + Math.sin(a) * r * (bottom - top) / 2 + (rnd() - 0.5) * 20));
+    let x = Math.max(-reachL, Math.min(reachR, Math.cos(a) * r * 150));
+    let y = Math.max(top, Math.min(bottom, (top + bottom) / 2 + Math.sin(a) * r * (bottom - top) / 2 + (rnd() - 0.5) * 20));
+    // Keep clear of the date card and the badge on the twine (they'd sit on top of the photo):
+    // nudge the photo past whichever edge of them is closest — left, right, or away from the twine.
+    const card = flip ? [-83, 36] : [-158, -36];         // their top and bottom, by the same measure as y
+    if ((half === 'B') === flip && Math.abs(x) < 122 && y < card[1] && y + 130 > card[0]) {
+      const moves = [{ x, y: half === 'A' ? card[0] - 130 : card[1] + 4 }];
+      if (reachR >= 124) moves.push({ x: 124, y });
+      if (reachL >= 124) moves.push({ x: -124, y });
+      ({ x, y } = moves.reduce((m, c) => (Math.hypot(c.x - x, c.y - y) < Math.hypot(m.x - x, m.y - y) ? c : m)));
+    }
     return { x, y, rot };
   }
 

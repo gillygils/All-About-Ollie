@@ -471,7 +471,21 @@
   // Photos alternate below and above the twine. `tw` is how far down the board the twine runs;
   // y is measured from the scatter's anchor, which sits 60px below the twine.
   let boardTwine = 200;
-  function scatterSpot(id, k, ring, flip = false) {
+  // `block` says where the neighbouring days' event stacks are: { l, r } each 'A' (above the twine),
+  // 'B' (below) or nothing. A photo headed onto one goes to the other side instead, or, if both
+  // neighbours' stacks are on that half, across the twine — so loose photos never land on a stack.
+  function scatterSpot(id, k, ring, flip = false, block = {}) {
+    const s = baseSpot(id, k, ring, flip);
+    const half = s.y + 67 < -60 ? 'A' : 'B';            // the twine is 60px above the anchor; photos are ~134px tall
+    const side = s.x < 0 ? 'l' : 'r';
+    const other = side === 'l' ? 'r' : 'l';
+    if (Math.abs(s.x) < 40 || block[side] !== half) return s;
+    if (block[other] !== half) return { ...s, x: -s.x };
+    const r = ((id * 131) % 97) / 97;
+    if (half === 'B') return { ...s, y: 14 + r * Math.max(0, boardTwine - 124) - (boardTwine + 60) };
+    return { ...s, y: 10 + r * 60 };
+  }
+  function baseSpot(id, k, ring, flip) {
     let s = (id * 7919) % 233280;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     const rot = (rnd() - 0.5) * 26;
@@ -519,7 +533,7 @@
     return [...ids.slice(i), ...ids.slice(0, i)];
   }
 
-  function stackHTML(g, l, flip = false) {
+  function stackHTML(g, l, flip = false, block = {}) {
     const Z = ZOOM_LEVELS[l];
     // On the Days view, photos without an event are scattered loose around the day; event photos stay stacked.
     const scatter = l === MAXL && g.looseCount > 0;
@@ -558,7 +572,7 @@
     }
 
     const loose = scatter ? `<div class="tl-scatter">${g.loose.map((p, k) => {
-      const s = scatterSpot(p.id, k, !!top, flip);
+      const s = scatterSpot(p.id, k, !!top, flip, block);
       return `<div class="spol" data-photo="${p.id}" role="button" tabindex="0" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}"
           style="left:${(s.x - 56).toFixed(1)}px;top:${s.y.toFixed(1)}px;--r:${s.rot.toFixed(1)}deg;z-index:${k + 1}">
         <span class="pin"></span>
@@ -653,20 +667,24 @@
       const looseBoard = document.createElement('div');
       looseBoard.className = 'loose-board';
       el.appendChild(looseBoard);
+      // Days view: event days take turns — every other one has its photo stack above the twine and
+      // its date below, so neighbouring events sit on opposite sides.
+      // (a day whose photos are all loose has no stack to move, so it doesn't take a turn)
       let eventDays = 0;
+      const stackAt = gs.map((g) => {
+        const hasStack = !(g.looseCount > 0 && g.eventPreviews.length === 0);
+        if (l !== MAXL || !g.events.length || !hasStack) return null;
+        return eventDays++ % 2 === 1 ? 'A' : 'B';       // where the day's event stack sits
+      });
       el.items = gs.map((g, i) => {
         const it = document.createElement('div');
         it.className = 'stop';
-        // Days view: event days take turns — every other one has its photo stack above the twine and
-        // its date below, so neighbouring events sit on opposite sides.
-        // (a day whose photos are all loose has no stack to move, so it doesn't take a turn)
-        const hasStack = !(g.looseCount > 0 && g.eventPreviews.length === 0);
-        const flip = l === MAXL && g.events.length > 0 && hasStack && eventDays++ % 2 === 1;
+        const flip = stackAt[i] === 'A';
         if (flip) it.classList.add('flip');
-        if (l === MAXL && g.events.length > 0 && hasStack) it.classList.add('event-stack'); // drawn above neighbouring days' loose photos
+        if (stackAt[i]) it.classList.add('event-stack'); // drawn above neighbouring days' loose photos
         it.dataset.l = l; it.dataset.i = i;
         it.style.display = 'none';
-        it.innerHTML = stackHTML(g, l, flip);
+        it.innerHTML = stackHTML(g, l, flip, { l: stackAt[i - 1], r: stackAt[i + 1] });
         // Each loose photo gets its own holder on the loose board, moved with its day, so a tapped
         // or hovered one can be raised above the event stacks on its own.
         const scatter = it.querySelector('.tl-scatter');

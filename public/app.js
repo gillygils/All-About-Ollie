@@ -2,7 +2,8 @@
 
 (() => {
   const root = document.getElementById('app');
-  const state = { user: null, site: null, days: new Map(), tlScroll: null };
+  // state.live: hooks the open timeline and photo viewer register, so live updates can reach them
+  const state = { user: null, site: null, days: new Map(), tlScroll: null, live: {} };
 
   const THEMES = [
     { id: 'cream', name: 'Cream', bg: '#faf5ec', text: '#3b2f28', dots: ['#d9774b', '#6f8f72', '#e6d9c6'] },
@@ -140,6 +141,7 @@
     }
     state.user = s.user;
     state.site = s.site;
+    stopLive();
     $$('.modal-back, .lb').forEach((el) => el.remove());
     if (s.user) applyTheme(s.user.theme);
     if (s.setupNeeded) return renderSetup();
@@ -147,6 +149,7 @@
     if (!s.user) return renderAuth();
     renderShell();
     route();
+    startLive();
   }
 
   const gate = (inner, wide = false) => {
@@ -259,7 +262,7 @@
     const [tab, id] = currentRoute();
     $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
     $('#fab').classList.toggle('hidden', tab === 'settings');
-    main.className = '';
+    if (!quietRefresh) main.className = '';
     try {
       if (tab === 'events' && id) await viewEvent(main, Number(id));
       else if (tab === 'events') await viewEvents(main);
@@ -271,7 +274,59 @@
   }
   window.addEventListener('hashchange', () => { if (state.user) { window.scrollTo(0, 0); route(); } });
 
-  const loading = (main, msg = 'Loading memories…') => { main.innerHTML = `<div class="loading" style="min-height:40vh">${msg}</div>`; };
+  const loading = (main, msg = 'Loading memories…') => {
+    if (quietRefresh) return; // a live update redraws in place, without flashing "Loading…"
+    main.innerHTML = `<div class="loading" style="min-height:40vh">${msg}</div>`;
+  };
+
+  // ---------------------------------------------------------------- live updates
+  // The server sends a short notice whenever something changes. We then redraw the current page
+  // in place — but never while someone is swiping, zooming, or has a photo or dialog open.
+  let liveSource = null;
+  let livePending = false;
+  let liveTimer = 0;
+  let quietRefresh = false;
+
+  function startLive() {
+    stopLive();
+    liveSource = new EventSource('/api/live');
+    liveSource.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+      onLive(msg);
+    };
+  }
+  function stopLive() {
+    liveSource?.close();
+    liveSource = null;
+    clearTimeout(liveTimer);
+    livePending = false;
+  }
+
+  function onLive(msg) {
+    const mine = msg.from === state.user?.id;
+    if (msg.type === 'photos' && !mine) {
+      toast(`📸 ${msg.by} added ${msg.count === 1 ? 'a new memory' : `${msg.count} new memories`}`);
+    }
+    // an open photo updates itself straight away (comments, hearts, a video finishing)
+    if (msg.type === 'social') state.live.onSocial?.(msg.id);
+    if (msg.type === 'photo') state.live.onPhoto?.(msg.id, msg.removed);
+    if (mine && msg.type !== 'photo') return; // your own changes already show on your screen
+    livePending = true;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(applyLive, 600); // a burst of notices → one redraw
+  }
+
+  async function applyLive() {
+    if (!livePending || !state.user) return;
+    if (currentRoute()[0] === 'settings') { livePending = false; return; }
+    const busy = document.hidden || $('.lb') || $('.modal-back') || state.live.timelineBusy?.();
+    if (busy) { liveTimer = setTimeout(applyLive, 1000); return; } // try again once they're done
+    livePending = false;
+    quietRefresh = true;
+    try { await route(); } finally { quietRefresh = false; }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) applyLive(); });
 
   // ---------------------------------------------------------------- timeline
 
@@ -652,6 +707,9 @@
     stage.addEventListener('touchend', (e) => { if (pinch && e.touches.length < 2) { pinch = null; settle(); } });
     stage.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: don't zoom the page
 
+    // Live updates wait while you're swiping, pinching or mid-animation.
+    state.live.timelineBusy = () => stage.isConnected && (!!drag?.moved || !!pinch || anim !== 0);
+
     // Keep things lined up if the window is resized or the phone rotated.
     const ro = new ResizeObserver(() => { if (stage.isConnected) { tx = clampTx(tx); render(); } else ro.disconnect(); });
     ro.observe(stage);
@@ -772,9 +830,44 @@
       lb.remove();
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
+      if (state.live.onSocial === onLiveSocial) { state.live.onSocial = null; state.live.onPhoto = null; }
       if (changed) ctx.onChange?.();
       else if (social) ctx.onSocial?.();
     };
+
+    // ---- live updates for the photo you're looking at
+    const paintSocial = (p) => {
+      const heart = $('[data-like]', lb);
+      if (!heart) return;
+      heart.textContent = p.liked ? '♥' : '♡';
+      heart.classList.toggle('on', !!p.liked);
+      heart.setAttribute('aria-pressed', !!p.liked);
+      $('.lb-liked', lb).innerHTML = likedLine(p);
+      $('.lb-viewall', lb).textContent = p.commentCount
+        ? `View ${p.commentCount === 1 ? 'the comment' : `all ${p.commentCount} comments`}` : 'Add a comment…';
+    };
+    async function onLiveSocial(photoId) {
+      const p = photos[i];
+      if (!p || p.id !== photoId) return;
+      try {
+        const r = await api(`/api/photos/${p.id}/comments`);
+        if (photos[i] !== p) return;
+        Object.assign(p, { commentCount: r.comments.length, likeCount: r.likedBy.length, liked: r.liked, firstLiker: r.likedBy[0] || null });
+        social = true;
+        paintSocial(p);
+        if (panelOpen) loadComments(p); // new comments appear in the open panel (what you're typing is kept)
+      } catch { /* the next notice will try again */ }
+    }
+    async function onLivePhoto(photoId, removed) {
+      const p = photos[i];
+      if (!p || p.id !== photoId || removed) return;
+      try {
+        const fresh = (await api(`/api/photos?date=${p.date}`)).find((x) => x.id === p.id);
+        if (fresh && photos[i] === p && fresh.status !== p.status) { Object.assign(p, fresh); render(); } // video now playable
+      } catch { /* ignore */ }
+    }
+    state.live.onSocial = onLiveSocial;
+    state.live.onPhoto = onLivePhoto;
     const go = (n) => { if (photos.length > 1) { i = (i + n + photos.length) % photos.length; render(); } };
     let panelOpen = !!ctx.comments; // comments panel stays open as you move between photos
     const onKey = (e) => {
@@ -877,10 +970,7 @@
         try {
           await toggleLike(p, force);
           social = true;
-          heartBtn.textContent = p.liked ? '♥' : '♡';
-          heartBtn.classList.toggle('on', !!p.liked);
-          heartBtn.setAttribute('aria-pressed', !!p.liked);
-          $('.lb-liked', lb).innerHTML = likedLine(p);
+          paintSocial(p);
           if (p.liked) pop(heartBtn);
           if (panelOpen) loadComments(p); // refresh the "♥ who liked it" line
         } catch (e) { oops(e); }
@@ -968,9 +1058,6 @@
           <p>${esc(c.body)}</p>
           ${c.canDelete ? '<button class="link danger" data-del-comment>Delete</button>' : ''}
         </div>`;
-      const viewAll = () => {
-        $('.lb-viewall', lb).textContent = p.commentCount ? `View ${p.commentCount === 1 ? 'the comment' : `all ${p.commentCount} comments`}` : 'Add a comment…';
-      };
       const draw = (comments, likedBy) => {
         if (photos[i] !== p || !list.isConnected) return; // moved on to another photo meanwhile
         $('.liked-by', panel).textContent = likedBy.length ? `♥ ${likedBy.join(', ')}` : '';
@@ -993,7 +1080,7 @@
           await api(`/api/comments/${cid}`, { method: 'DELETE' });
           comments = comments.filter((c) => c.id !== cid);
           p.commentCount = comments.length; social = true;
-          viewAll();
+          paintSocial(p);
           draw(comments, likers);
         } catch (err) { oops(err); }
       };
@@ -1008,7 +1095,7 @@
           comments.push(c);
           p.commentCount = comments.length; social = true;
           input.value = ''; input.style.height = '';
-          viewAll();
+          paintSocial(p);
           list.querySelector('p.muted')?.remove();
           list.insertAdjacentHTML('beforeend', showOne(c));
           list.scrollTop = list.scrollHeight;

@@ -30,6 +30,14 @@ Like Instagram, every photo and video has a **♡ 💬** row right under it, bot
 - You can delete your own comments, and the admin can delete any comment.
 - Comments and hearts on a private photo are only visible to the people who can see that photo.
 
+## Live updates
+
+Anyone with the site open sees changes without reloading: new photos and videos, comments, hearts, events, and videos finishing conversion. New uploads also show a notice like "📸 Mom added 3 new memories".
+
+- **No interruptions:** the page waits to update while someone is swiping, zooming, or has a photo or dialog open. Comments and hearts on the photo they're viewing update straight away, and anything half-typed is kept.
+- **How it works:** each open page holds one connection to `/api/live`. It only receives short "something changed" notices, then re-fetches through the normal permission-checked pages.
+- **Privacy:** notices about a private photo only go to the people who can see it.
+
 ## Private photos
 
 When adding photos, choose **Only people I choose** and tick who may see them. To change it later, open the photo and tap the 🔒 / 👨‍👩‍👧 button.

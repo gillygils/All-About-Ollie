@@ -278,6 +278,37 @@ const needUser = (req, res, next) => {
 const needAdmin = (req, res, next) =>
   needUser(req, res, () => (req.user.is_admin ? next() : fail(res, 'Only the admin can do that.', 403)));
 
+// ---------------------------------------------------------------- live updates
+
+// Open pages keep one Server-Sent Events connection here. When something changes we send a
+// short notice ("photos added", "comments on photo 12" …) and the page re-fetches what it needs
+// through the normal, permission-checked API — so a notice never carries anything private.
+const listeners = new Set();
+app.get('/api/live', needUser, (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  res.write('retry: 5000\n\n');
+  const client = { res, uid: req.user.id };
+  listeners.add(client);
+  res.on('close', () => listeners.delete(client));
+});
+// A comment line every 25s keeps the connection open through Cloudflare and other proxies.
+setInterval(() => { for (const c of listeners) c.res.write(': ping\n\n'); }, 25000).unref();
+
+// Send a notice to everyone, or only to the user ids in `only`.
+function broadcast(msg, only = null) {
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const c of listeners) if (!only || only.has(c.uid)) c.res.write(data);
+}
+// Who may hear about a photo: everyone (null), or for a private one, its uploader and access list.
+function audience(photoId) {
+  const p = get('SELECT restricted, uploaded_by FROM photos WHERE id = ?', photoId);
+  if (!p || !p.restricted) return null;
+  const ids = new Set(all('SELECT user_id AS id FROM photo_access WHERE photo_id = ?', photoId).map((r) => r.id));
+  if (p.uploaded_by) ids.add(p.uploaded_by);
+  return ids;
+}
+
 // ---------------------------------------------------------------- setup, PIN, accounts
 
 app.get('/api/status', (req, res) => {
@@ -509,6 +540,7 @@ function queueConversion(photoId) {
       fs.rm(partial, { force: true }, () => {});
       run("UPDATE photos SET status = 'failed' WHERE id = ?", v.id);
     }
+    broadcast({ type: 'photo', id: v.id }, audience(v.id)); // "Converting…" → playable
   });
 }
 // Pick up conversions interrupted by a restart.
@@ -581,6 +613,10 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
       fs.rm(path.join(DIRS.thumb, `${name}.webp`), { force: true }, () => {});
     }
   }
+  if (saved.length) {
+    broadcast({ type: 'photos', count: saved.length, date, eventId, by: req.user.display_name, from: req.user.id },
+      restricted ? new Set([req.user.id, ...allowed]) : null);
+  }
   res.json({ saved, failed });
 });
 
@@ -614,6 +650,7 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
     if (!isDate(b.date)) return fail(res, 'That date isn’t valid.');
     date = b.date;
   }
+  const before = audience(photo.id);
   tx(() => {
     if (eventId !== photo.event_id) run('UPDATE events SET cover_photo_id = NULL WHERE cover_photo_id = ?', photo.id);
     run('UPDATE photos SET date = ?, event_id = ?, caption = ? WHERE id = ?', date, eventId, caption, photo.id);
@@ -622,6 +659,9 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
       setAccess(photo.id, restricted, restricted ? readAllowed(b.allowedUserIds, photo.uploaded_by) : []);
     }
   });
+  // tell everyone who could see it before or can see it now (so it appears or disappears for them)
+  const after = audience(photo.id);
+  broadcast({ type: 'photo', id: photo.id }, before && after ? new Set([...before, ...after]) : null);
   res.json(get(`${PHOTO_SELECT} WHERE p.id = $id`, { id: photo.id, uid: req.user.id }));
 });
 
@@ -638,6 +678,7 @@ app.get('/api/photos/:id/comments', needUser, (req, res) => {
     comments: all(`${COMMENT_SELECT} WHERE c.photo_id = ? ORDER BY c.id`, photo.id)
       .map((c) => ({ ...c, canDelete: canEdit(req.user, c.userId) })),
     likedBy: likedBy(photo.id),
+    liked: !!get('SELECT 1 AS x FROM likes WHERE photo_id = ? AND user_id = ?', photo.id, req.user.id),
   });
 });
 const likedBy = (photoId) => all(
@@ -650,6 +691,7 @@ app.post('/api/photos/:id/comments', needUser, (req, res) => {
   const body = text(req.body?.body, 1000);
   if (!body) return fail(res, 'Write something first.');
   const r = run('INSERT INTO comments(photo_id, user_id, body) VALUES(?, ?, ?)', photo.id, req.user.id, body);
+  broadcast({ type: 'social', id: photo.id, from: req.user.id }, audience(photo.id));
   res.json({ ...get(`${COMMENT_SELECT} WHERE c.id = ?`, Number(r.lastInsertRowid)), canDelete: true });
 });
 
@@ -658,6 +700,7 @@ app.delete('/api/comments/:id', needUser, (req, res) => {
   if (!c || !visiblePhoto(c.photo_id, req.user)) return fail(res, 'Comment not found.', 404);
   if (!canEdit(req.user, c.user_id)) return fail(res, 'You can only delete your own comments.', 403);
   run('DELETE FROM comments WHERE id = ?', c.id);
+  broadcast({ type: 'social', id: c.photo_id, from: req.user.id }, audience(c.photo_id));
   res.json({ ok: true });
 });
 
@@ -667,6 +710,7 @@ app.put('/api/photos/:id/like', needUser, (req, res) => {
   if (req.body?.liked) run('INSERT OR IGNORE INTO likes(photo_id, user_id) VALUES(?, ?)', photo.id, req.user.id);
   else run('DELETE FROM likes WHERE photo_id = ? AND user_id = ?', photo.id, req.user.id);
   const names = likedBy(photo.id);
+  broadcast({ type: 'social', id: photo.id, from: req.user.id }, audience(photo.id));
   res.json({ liked: !!req.body?.liked, likeCount: names.length, likedBy: names, firstLiker: names[0] || null });
 });
 
@@ -674,7 +718,9 @@ app.delete('/api/photos/:id', needUser, async (req, res) => {
   const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return fail(res, 'Photo not found.', 404);
   if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'You can only delete photos you added.', 403);
+  const who = audience(photo.id);
   run('DELETE FROM photos WHERE id = ?', photo.id);
+  broadcast({ type: 'photo', id: photo.id, removed: true }, who);
   await fs.promises.rm(path.join(DIRS.full, `${photo.file}.jpg`), { force: true });
   await fs.promises.rm(path.join(DIRS.thumb, `${photo.file}.webp`), { force: true });
   await fs.promises.rm(path.join(DIRS.video, `${photo.file}.mp4`), { force: true });
@@ -749,6 +795,7 @@ app.post('/api/events', needUser, (req, res) => {
   if (ev.error) return fail(res, ev.error);
   const r = run('INSERT INTO events(title, date, emoji, description, created_by) VALUES(?, ?, ?, ?, ?)',
     ev.title, ev.date, ev.emoji, ev.description, req.user.id);
+  broadcast({ type: 'events', from: req.user.id });
   res.json({ id: Number(r.lastInsertRowid) });
 });
 
@@ -770,6 +817,7 @@ app.patch('/api/events/:id', needUser, (req, res) => {
       ev.title, ev.date, ev.emoji, ev.description, cover, current.id);
     run('UPDATE photos SET date = ? WHERE event_id = ?', ev.date, current.id);
   });
+  broadcast({ type: 'events', from: req.user.id });
   res.json({ ok: true });
 });
 
@@ -778,6 +826,7 @@ app.delete('/api/events/:id', needUser, (req, res) => {
   if (!current) return fail(res, 'Event not found.', 404);
   if (!canEdit(req.user, current.created_by)) return fail(res, 'Only the person who made this event (or the admin) can delete it.', 403);
   run('DELETE FROM events WHERE id = ?', current.id); // its photos stay on the timeline, just without the event
+  broadcast({ type: 'events', from: req.user.id });
   res.json({ ok: true });
 });
 

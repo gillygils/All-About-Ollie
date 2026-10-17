@@ -46,6 +46,17 @@ When adding photos, choose **Only people I choose** and tick who may see them. T
 - Private photos are visible only to the person who added them and the people they picked. **Admins don't get automatic access.**
 - For everyone else, private photos don't appear anywhere: not on the timeline, in events, in photo counts, or as an event's cover. The image links themselves return "not found".
 
+## Who shared this?
+
+Everyone's copy of a photo carries an invisible fingerprint of their own: a faint pattern tied to their account, made the first time they open it. It's kept fainter on smooth areas like skin and sky, so it can't be seen. Video poster frames are fingerprinted too, but videos themselves aren't.
+
+If one of our photos turns up somewhere else, save it or take a screenshot, then open **Settings → Who shared this?** and add it. For a screenshot, drag a box around just the photo. The site works out which photo it is, checks whose fingerprint is in it, and lists everyone who has opened or seen that photo.
+
+- It survives resizing, recompression (as Instagram and Facebook do), screenshots, light edits and crops down to about 40% of the photo.
+- Heavy editing, cropping to a small corner, or photographing the screen with another phone can break it.
+- It names whose copy was shared, not who posted it: they may have passed it on.
+- Copies saved before this feature existed carry no fingerprint.
+
 ## Videos
 
 Videos upload like photos, up to 2 GB each. The server then:
@@ -86,6 +97,7 @@ Everything lives in `data/`, which is git-ignored. **Back this folder up.**
 | `data/thumbs/` | Small previews |
 | `data/videos/` | Converted MP4s people watch |
 | `data/originals/` | Untouched originals as uploaded. They are never shown on the site. |
+| `data/marked/` | Each person's fingerprinted copies, made the first time they open a photo. Safe to delete; they're remade as needed. |
 
 ## Hosting it online
 

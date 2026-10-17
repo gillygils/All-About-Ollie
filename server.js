@@ -11,6 +11,7 @@ const { DatabaseSync } = require('node:sqlite');
 const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
+const fingerprint = require('./fingerprint');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -19,6 +20,7 @@ const DIRS = {
   thumb: path.join(DATA_DIR, 'thumbs'),     // also video poster frames
   video: path.join(DATA_DIR, 'videos'),     // converted MP4s every browser can play
   orig: path.join(DATA_DIR, 'originals'),  // untouched uploads, never served — your backup
+  marked: path.join(DATA_DIR, 'marked'),   // each person's fingerprinted copies, made on first view
   tmp: path.join(DATA_DIR, 'tmp'),
 };
 for (const d of [DATA_DIR, ...Object.values(DIRS)]) fs.mkdirSync(d, { recursive: true });
@@ -96,6 +98,21 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (photo_id, user_id)
   );
+  -- who has opened which photo ('full' = opened it, 'thumb' = saw it on the board, 'video' = played it)
+  CREATE TABLE IF NOT EXISTS photo_views (
+    photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    first_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_at TEXT NOT NULL DEFAULT (datetime('now')),
+    times INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (photo_id, user_id, kind)
+  );
+  -- a tiny greyscale version of each photo, for recognising a copy found elsewhere
+  CREATE TABLE IF NOT EXISTS photo_sigs (
+    photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+    sig BLOB NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS comments_photo ON comments(photo_id);
   CREATE INDEX IF NOT EXISTS photos_date ON photos(date);
   CREATE INDEX IF NOT EXISTS photos_event ON photos(event_id);
@@ -133,6 +150,10 @@ const VISIBLE = `(p.restricted = 0 OR p.uploaded_by = $uid
 const getSetting = (k) => get('SELECT value FROM settings WHERE key = ?', k)?.value ?? null;
 const setSetting = (k, v) =>
   run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', k, v);
+// The secret behind everyone's fingerprint pattern (see fingerprint.js). Made once and kept.
+if (!getSetting('fp_secret')) setSetting('fp_secret', crypto.randomBytes(32).toString('hex'));
+const FP_SECRET = getSetting('fp_secret');
+const fpKey = (userId) => `user:${userId}`;
 const hasUsers = () => !!get('SELECT 1 AS x FROM users LIMIT 1');
 const siteInfo = () => ({ babyName: getSetting('baby_name') || 'Baby', birthDate: getSetting('birth_date') });
 
@@ -627,6 +648,7 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
         const duration = await probeDuration(orig);
         const info = await makePoster(orig, name, duration);
         const vid = insert(name, info, 'video', duration);
+        saveSignature(vid, name);
         queueConversion(vid);
         saved.push(vid);
       } else {
@@ -641,7 +663,9 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
           .webp({ quality: 78 })
           .toFile(path.join(DIRS.thumb, `${name}.webp`));
         await fs.promises.rename(f.path, path.join(DIRS.orig, name + ext));
-        saved.push(insert(name, info, 'photo', null));
+        const pid = insert(name, info, 'photo', null);
+        saveSignature(pid, name);
+        saved.push(pid);
       }
     } catch (err) {
       console.warn(`Could not process ${f.originalname}:`, err.message);
@@ -761,6 +785,7 @@ async function deletePhoto(photo) {
   await fs.promises.rm(path.join(DIRS.full, `${photo.file}.jpg`), { force: true });
   await fs.promises.rm(path.join(DIRS.thumb, `${photo.file}.webp`), { force: true });
   await fs.promises.rm(path.join(DIRS.video, `${photo.file}.mp4`), { force: true });
+  await fs.promises.rm(path.join(DIRS.marked, photo.file), { recursive: true, force: true });
   for (const f of await fs.promises.readdir(DIRS.orig)) {
     if (f.startsWith(photo.file)) await fs.promises.rm(path.join(DIRS.orig, f), { force: true });
   }
@@ -774,22 +799,133 @@ app.delete('/api/photos/:id', needUser, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- fingerprints
+
+// The viewer's own copy of a photo: made the first time they open it, then kept.
+const making = new Map();
+async function markedCopy(photo, kind, userId) {
+  const clean = kind === 'thumb' ? path.join(DIRS.thumb, `${photo.file}.webp`) : path.join(DIRS.full, `${photo.file}.jpg`);
+  const out = path.join(DIRS.marked, photo.file, `${kind}-${userId}${kind === 'thumb' ? '.webp' : '.jpg'}`);
+  if (fs.existsSync(out)) return out;
+  if (!making.has(out)) {
+    making.set(out, (async () => {
+      await fs.promises.mkdir(path.dirname(out), { recursive: true });
+      await fingerprint.stamp(clean, fingerprint.patternFor(FP_SECRET, fpKey(userId)), out);
+    })().finally(() => making.delete(out)));
+  }
+  await making.get(out);
+  return out;
+}
+
+// Remembers who opened what. Seeing the same thing again within 10 minutes isn't counted again.
+const recentViews = new Map();
+function noteView(photoId, userId, kind) {
+  const key = `${photoId}:${userId}:${kind}`;
+  const now = Date.now();
+  if (now - (recentViews.get(key) || 0) < 10 * 60 * 1000) return;
+  recentViews.set(key, now);
+  if (recentViews.size > 50000) recentViews.clear();
+  run(`INSERT INTO photo_views(photo_id, user_id, kind) VALUES(?, ?, ?)
+       ON CONFLICT(photo_id, user_id, kind) DO UPDATE SET last_at = datetime('now'), times = times + 1`, photoId, userId, kind);
+}
+
+async function saveSignature(photoId, file) {
+  try {
+    const sig = await fingerprint.signature(path.join(DIRS.thumb, `${file}.webp`));
+    run('INSERT OR REPLACE INTO photo_sigs(photo_id, sig) VALUES(?, ?)', photoId, sig);
+  } catch (err) {
+    console.warn(`Could not read photo ${photoId} for matching:`, err.message);
+  }
+}
+// Photos added before fingerprints existed: fill their signatures in quietly after startup.
+setTimeout(async () => {
+  for (const p of all('SELECT id, file FROM photos WHERE id NOT IN (SELECT photo_id FROM photo_sigs)')) await saveSignature(p.id, p.file);
+}, 2000);
+
+// "Who shared this?" — the admin adds a copy of one of our photos found elsewhere (and, for a
+// screenshot, the part of it that shows the photo). We work out which photo it is, then whose
+// fingerprint is in it, and list who has opened that photo.
+const traceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PHOTO_BYTES, files: 1 } });
+app.post('/api/admin/trace', needAdmin, traceUpload.single('image'), async (req, res) => {
+  if (!req.file) return fail(res, 'Choose the picture you found.');
+  let crop = { x: 0, y: 0, w: 1, h: 1 };
+  try {
+    const c = JSON.parse(req.body.crop || 'null');
+    if (c && [c.x, c.y, c.w, c.h].every((v) => Number.isFinite(v)) && c.w > 0.05 && c.h > 0.05) {
+      const x = Math.min(0.95, Math.max(0, c.x)), y = Math.min(0.95, Math.max(0, c.y));
+      crop = { x, y, w: Math.min(1 - x, c.w), h: Math.min(1 - y, c.h) };
+    }
+  } catch { /* use the whole picture */ }
+  let found;
+  try {
+    const meta = await sharp(req.file.buffer, { failOn: 'none' }).rotate().metadata();
+    const turned = (meta.orientation || 1) >= 5;
+    const W = turned ? meta.height : meta.width, H = turned ? meta.width : meta.height;
+    found = await sharp(req.file.buffer, { failOn: 'none' }).rotate()
+      .extract({ left: Math.round(crop.x * W), top: Math.round(crop.y * H), width: Math.max(1, Math.round(crop.w * W)), height: Math.max(1, Math.round(crop.h * H)) })
+      .toBuffer();
+  } catch {
+    return fail(res, 'That file doesn’t look like a picture.');
+  }
+
+  // Which of our photos is it? The closest few by their tiny versions, then whichever lines up best.
+  const sig = await fingerprint.signature(found);
+  const ranked = all('SELECT photo_id AS id, sig FROM photo_sigs')
+    .map((r) => ({ id: r.id, score: fingerprint.ncc(sig, r.sig) }))
+    .sort((a, b) => b.score - a.score).slice(0, 3)
+    .filter((r) => r.score > 0.5);
+  const users = all('SELECT id, display_name AS name FROM users');
+  let best = null;
+  for (const r of ranked) {
+    const photo = get('SELECT * FROM photos WHERE id = ?', r.id);
+    if (!photo) continue;
+    const result = await fingerprint.check(req.file.buffer, crop, path.join(DIRS.full, `${photo.file}.jpg`),
+      users.map((u) => ({ key: fpKey(u.id), id: u.id, name: u.name })), FP_SECRET);
+    if (!best || result.lineUp > best.result.lineUp) best = { photo, result };
+    if (result.lineUp > 0.97) break;
+  }
+  if (!best || best.result.lineUp < 0.8) return res.json({ found: false });
+
+  const { photo, result } = best;
+  const canSee = audience(photo.id); // null = everyone
+  const views = all(`SELECT v.user_id AS userId, u.display_name AS name, v.kind, v.first_at AS firstAt, v.last_at AS lastAt, v.times
+    FROM photo_views v JOIN users u ON u.id = v.user_id WHERE v.photo_id = ? ORDER BY v.last_at DESC`, photo.id);
+  res.json({
+    found: true,
+    photo: {
+      id: photo.id, date: photo.date, caption: photo.caption, kind: photo.kind,
+      uploadedBy: get('SELECT display_name AS n FROM users WHERE id = ?', photo.uploaded_by)?.n || null,
+    },
+    lineUp: result.lineUp,
+    coverage: result.coverage,
+    people: result.scores.map((p) => ({ id: p.id, name: p.name, score: Math.round(p.score * 10) / 10, canSee: !canSee || canSee.has(p.id) })),
+    views,
+  });
+});
+
 // Images and videos are only ever served to people who passed both locks.
 // (For a video, "full" and "thumb" are its poster frame.)
-app.get('/media/:kind/:id', needUser, (req, res) => {
+// Photos (and video poster frames) go out as the viewer's own fingerprinted copy.
+app.get('/media/:kind/:id', needUser, async (req, res) => {
   const photo = visiblePhoto(id(req.params.id), req.user);
   if (!photo) return res.sendStatus(404);
   let file;
   let download = `photo-${photo.id}.jpg`;
-  if (req.params.kind === 'thumb') file = path.join(DIRS.thumb, `${photo.file}.webp`);
-  else if (req.params.kind === 'full') file = path.join(DIRS.full, `${photo.file}.jpg`);
-  else if (req.params.kind === 'video' && photo.kind === 'video' && photo.status === 'ready') {
+  if (req.params.kind === 'thumb' || req.params.kind === 'full') {
+    try {
+      file = await markedCopy(photo, req.params.kind, req.user.id);
+    } catch (err) {
+      console.warn(`Could not fingerprint photo ${photo.id}:`, err.message);
+      return res.sendStatus(500);
+    }
+  } else if (req.params.kind === 'video' && photo.kind === 'video' && photo.status === 'ready') {
     file = path.join(DIRS.video, `${photo.file}.mp4`);
     download = `video-${photo.id}.mp4`;
   } else return res.sendStatus(404);
   // no-cache: browsers keep a copy but must re-ask (cheaply, via ETag) each time, so a photo made
   // private — or a shared device where someone else logs in — never shows from cache.
   res.set('Cache-Control', 'private, no-cache');
+  noteView(photo.id, req.user.id, req.params.kind);
   if (req.query.download) res.attachment(download);
   res.sendFile(file); // handles Range requests, so videos can seek and stream
 });

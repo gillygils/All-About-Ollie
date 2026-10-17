@@ -605,3 +605,29 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   .mg-grid { grid-template-columns: repeat(3, 1fr); gap: 4px; }
   .mg-bar { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
 }
+
+/* ---------------------------------------------------------------- who shared this? (admins) */
+
+.tr-card { display: grid; gap: 12px; }
+.tr-pick { justify-self: start; cursor: pointer; }
+.tr-frame { position: relative; justify-self: center; max-width: 100%; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.tr-frame img { display: block; max-width: 100%; max-height: 60vh; border-radius: 8px; pointer-events: none; }
+.tr-box { position: absolute; border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .35); border-radius: 4px; pointer-events: none; }
+.tr-frame:has(.tr-box:not(.hidden)) { overflow: hidden; border-radius: 8px; }
+.tr-photo { display: flex; gap: 12px; align-items: center; }
+.tr-photo img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; }
+.tr-photo div { display: grid; gap: 2px; min-width: 0; }
+.tr-verdict { margin: 4px 0 0; }
+.tr-verdict.match { color: var(--accent); }
+.tr-verdict.none { color: var(--muted); }
+.tr-people { display: grid; gap: 6px; }
+.tr-person { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 2fr) 92px; gap: 10px; align-items: center; font-size: .9rem; }
+.tr-person.top { font-weight: 800; }
+.tr-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-name em { font-style: normal; color: var(--muted); font-weight: 600; font-size: .8rem; }
+.tr-bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.tr-bar i { display: block; height: 100%; background: var(--muted); border-radius: inherit; }
+.tr-person.top .tr-bar i { background: var(--accent); }
+.tr-word { font-size: .8rem; color: var(--muted); text-align: right; }
+.tr-card h4 { margin: 8px 0 0; }
+.tr-views { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .9rem; }

@@ -315,14 +315,16 @@
     const main = $('#main');
     if (!main) return;
     const [tab, id] = currentRoute();
-    $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.tab === (tab === 'manage' ? 'settings' : tab)));
-    $('#fab').classList.toggle('hidden', tab === 'settings' || tab === 'manage');
+    const adminPage = tab === 'manage' || tab === 'trace'; // pages reached from Settings
+    $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.tab === (adminPage ? 'settings' : tab)));
+    $('#fab').classList.toggle('hidden', tab === 'settings' || adminPage);
     if (!quietRefresh) main.className = '';
     try {
       if (tab === 'events' && id) await viewEvent(main, Number(id));
       else if (tab === 'events') await viewEvents(main);
       else if (tab === 'settings') await viewSettings(main);
       else if (tab === 'manage') await viewManage(main);
+      else if (tab === 'trace') await viewTrace(main);
       else await viewTimeline(main, opts);
     } catch (e) {
       if (!e.handled) main.innerHTML = `<div class="empty"><div class="big">😕</div><h3>Couldn’t load this page</h3><p>${esc(e.message)}</p></div>`;
@@ -398,7 +400,7 @@
   async function applyLive() {
     if (!livePending || !state.user) return;
     // Settings has nothing live; Manage photos would lose your selection if it redrew
-    if (['settings', 'manage'].includes(currentRoute()[0])) { livePending = false; return; }
+    if (['settings', 'manage', 'trace'].includes(currentRoute()[0])) { livePending = false; return; }
     const busy = document.hidden || $('.lb') || $('.modal-back') || state.live.timelineBusy?.();
     if (busy) { liveTimer = setTimeout(applyLive, 1000); return; } // try again once they're done
     livePending = false;
@@ -1893,6 +1895,11 @@
         </section>
 
         <section class="card admin">
+          <h3>Who shared this? <span class="pill">Admin</span></h3><p>Everyone’s copy of a photo carries an invisible mark of their own. Found one of ours somewhere else? Add it here to see whose copy it was, and who has looked at that photo.</p>
+          <div class="row end"><a class="btn primary" href="#/trace">Check a photo</a></div>
+        </section>
+
+        <section class="card admin">
           <h3>Family members <span class="pill">Admin</span></h3><p>People join by entering the PIN and creating an account. Remove anyone who shouldn’t have access.</p>
           <div id="members" class="muted">Loading…</div>
         </section>` : ''}
@@ -1941,6 +1948,136 @@
     });
 
     loadMembers($('#members', main));
+  }
+
+  // ---------------------------------------------------------------- who shared this? (admins)
+  // Add a copy of one of our photos found somewhere else (saved, or a screenshot). The server works
+  // out which photo it is and whose fingerprinted copy it came from, and lists who has opened it.
+  async function viewTrace(main) {
+    if (!state.user.isAdmin) { location.hash = '#/settings'; return; }
+    main.innerHTML = `
+      <a class="back" href="#/settings">← Settings</a>
+      <div class="page-head"><div><h2>Who shared this?</h2>
+        <p>Found one of our photos somewhere it shouldn’t be? Save it or take a screenshot, then add it here. Everyone’s copy of a photo carries an invisible mark of their own, and this checks whose copy it is.</p></div></div>
+      <section class="card tr-card">
+        <label class="btn primary tr-pick">Choose the picture<input type="file" accept="image/*" id="tr-file" hidden></label>
+        <div id="tr-stage" class="hidden">
+          <p class="muted small">If it’s a screenshot, drag a box around just the photo. Otherwise the whole picture is checked.</p>
+          <div class="tr-frame" id="tr-frame"><img id="tr-img" alt="The picture you found"><div class="tr-box hidden" id="tr-box"></div></div>
+          <p class="error" id="tr-error"></p>
+          <div class="row end"><button class="btn sm ghost hidden" id="tr-whole" type="button">Use the whole picture</button><button class="btn primary" id="tr-go" type="button">Check</button></div>
+        </div>
+      </section>
+      <div id="tr-result"></div>`;
+    const frame = $('#tr-frame', main);
+    const img = $('#tr-img', main);
+    const boxEl = $('#tr-box', main);
+    const err = $('#tr-error', main);
+    let file = null;
+    let box = null; // fractions of the picture
+
+    const showBox = () => {
+      boxEl.classList.toggle('hidden', !box);
+      $('#tr-whole', main).classList.toggle('hidden', !box);
+      if (box) Object.assign(boxEl.style, { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, height: `${box.h * 100}%` });
+    };
+    $('#tr-file', main).onchange = (e) => {
+      file = e.target.files[0];
+      if (!file) return;
+      img.src = URL.createObjectURL(file);
+      box = null; showBox();
+      err.textContent = '';
+      $('#tr-result', main).innerHTML = '';
+      $('#tr-stage', main).classList.remove('hidden');
+    };
+    $('#tr-whole', main).onclick = () => { box = null; showBox(); };
+
+    // drag out a box on the picture
+    let start = null;
+    const at = (e) => {
+      const r = img.getBoundingClientRect();
+      return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+    };
+    frame.addEventListener('pointerdown', (e) => { start = at(e); frame.setPointerCapture(e.pointerId); e.preventDefault(); });
+    frame.addEventListener('pointermove', (e) => {
+      if (!start) return;
+      const p = at(e);
+      box = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      showBox();
+    });
+    const endDrag = () => { if (box && (box.w < 0.05 || box.h < 0.05)) box = null; start = null; showBox(); };
+    frame.addEventListener('pointerup', endDrag);
+    frame.addEventListener('pointercancel', endDrag);
+
+    $('#tr-go', main).onclick = async () => {
+      if (!file) return;
+      const go = $('#tr-go', main);
+      go.disabled = true; go.textContent = 'Checking…';
+      err.textContent = '';
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        if (box) fd.append('crop', JSON.stringify(box));
+        showResult(await api('/api/admin/trace', { method: 'POST', body: fd }));
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        go.disabled = false; go.textContent = 'Check';
+      }
+    };
+
+    const when = (s) => fmtLong(String(s).slice(0, 10));
+    function showResult(r) {
+      const out = $('#tr-result', main);
+      if (!r.found) {
+        out.innerHTML = `<section class="card"><h3>Couldn’t find this photo</h3>
+          <p>It doesn’t match any photo on the site. If it’s a screenshot, try drawing the box more tightly around just the photo.</p></section>`;
+        return;
+      }
+      const [top, next] = r.people;
+      const gap = top && next ? top.score - next.score : top?.score || 0;
+      let verdict;
+      let cls;
+      if (top && top.score >= 6 && gap >= 3) {
+        cls = 'match';
+        verdict = `This is ${esc(possessive(top.name))} copy.`;
+      } else if (top && top.score >= 4) {
+        cls = 'maybe';
+        verdict = `Probably ${esc(possessive(top.name))} copy, but the mark is faint.`;
+      } else {
+        cls = 'none';
+        verdict = 'No one’s mark could be found in it.';
+      }
+      const why = cls === 'none'
+        ? 'It may have been edited heavily, cropped down to a small part, or saved before fingerprints were added to the site. Check who has opened it below.'
+        : cls === 'maybe'
+          ? 'The mark shows up, but not strongly — the copy may have been edited or cropped. Check who has opened it below too.'
+          : 'Their fingerprint shows up far more strongly than anyone else’s could by chance. It tells you whose copy was shared — they may have passed it on to someone else.';
+      const strengthWord = (s) => (s >= 6 ? 'Strong match' : s >= 4 ? 'Faint' : 'No sign');
+      const people = r.people.slice(0, 8).map((p) => `
+        <div class="tr-person${p === top && cls !== 'none' ? ' top' : ''}">
+          <span class="tr-name">${esc(p.name)}${p.canSee ? '' : ' <em>(can’t see this photo)</em>'}</span>
+          <span class="tr-bar"><i style="width:${Math.max(2, Math.min(100, (p.score / 12) * 100))}%"></i></span>
+          <span class="tr-word">${strengthWord(p.score)}</span>
+        </div>`).join('');
+      const kinds = { full: 'opened it', thumb: 'saw it on the board', video: 'played it' };
+      const views = r.views.length
+        ? r.views.map((v) => `<li><b>${esc(v.name)}</b> ${kinds[v.kind] || v.kind}${v.times > 1 ? ` (${v.times} times)` : ''} · last ${esc(when(v.lastAt))}</li>`).join('')
+        : '<li class="muted">No one has opened it since this list started.</li>';
+      out.innerHTML = `
+        <section class="card tr-card">
+          <div class="tr-photo">
+            <img src="/media/thumb/${r.photo.id}" alt="">
+            <div><b>${esc(fmtLong(r.photo.date))}</b>${r.photo.caption ? `<span>${esc(r.photo.caption)}</span>` : ''}
+              <span class="muted small">Added by ${esc(r.photo.uploadedBy || 'a former member')}</span></div>
+          </div>
+          <h3 class="tr-verdict ${cls}">${verdict}</h3>
+          <p class="muted small">${why}</p>
+          <div class="tr-people">${people}</div>
+          <h4>Who has looked at this photo</h4>
+          <ul class="tr-views">${views}</ul>
+        </section>`;
+    }
   }
 
   // ---------------------------------------------------------------- manage photos (admins)

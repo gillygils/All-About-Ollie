@@ -315,7 +315,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-scatter { position: absolute; left: 105px; top: calc(var(--tw) + 60px); width: 0; height: 0; }
 .spol {
   position: absolute; width: 112px; background: var(--polaroid); padding: 6px 6px 22px; cursor: pointer;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); transform: rotate(var(--r, 0deg)); transition: transform .18s;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); transform: rotate(var(--r, 0deg)) scale(var(--s, 1)); transition: transform .18s; /* --s: a little smaller on a crowded day */
 }
 .spol:focus-visible, .spol.front { transform: rotate(0) scale(1.12); z-index: 30 !important; }
 @media (hover: hover) { .spol:hover { transform: rotate(0) scale(1.12); z-index: 30 !important; } } /* mouse only — on phones a tap lifts it (.front) */

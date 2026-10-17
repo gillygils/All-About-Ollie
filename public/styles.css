@@ -257,6 +257,23 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-stack .b { left: 54px; top: 10px; transform: rotate(7deg); }
 .tl-stack .c { left: 28px; top: 34px; transform: rotate(-1.5deg); z-index: 2; }
 .tl-tag { position: absolute; right: -10px; bottom: 0; z-index: 4; background: var(--polaroid); font-family: "Caveat", cursive; font-size: 1.15rem; color: var(--polaroid-ink); padding: 0 10px; transform: rotate(4deg); box-shadow: 1px 2px 4px rgba(0, 0, 0, .35); white-space: nowrap; }
+/* Days view: photos without an event, pinned loose around their day, overlapping like a real board */
+.tl-stack { z-index: 4; }
+.tl-events { position: relative; z-index: 9; }
+.stop:hover { z-index: 5; } /* lift the whole day so a hovered photo can come above its neighbours */
+.tl-scatter { position: absolute; left: 105px; top: 150px; width: 0; height: 0; }
+.spol {
+  position: absolute; width: 112px; background: var(--polaroid); padding: 6px 6px 22px; cursor: pointer;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); transform: rotate(var(--r, 0deg)); transition: transform .18s;
+}
+.spol:hover, .spol:focus-visible { transform: rotate(0) scale(1.12); z-index: 30 !important; }
+.spol .ph { position: relative; height: 96px; background: rgba(0, 0, 0, .12); overflow: hidden; }
+.spol .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.spol .cap { position: absolute; left: 3px; right: 3px; bottom: 2px; text-align: center; font-family: "Caveat", cursive; font-size: .98rem; line-height: 1.2; color: var(--polaroid-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spol > .pin { position: absolute; top: -6px; left: 50%; width: 13px; height: 13px; margin-left: -7px; z-index: 2; }
+.spol .play { width: 30px; height: 30px; margin: -15px 0 0 -15px; font-size: 12px; }
+.spol .dur { right: 4px; bottom: 4px; }
+.scatter-tag { right: auto; bottom: auto; left: -38px; top: 206px; z-index: 20; border: 0; cursor: pointer; }
 .tl-stack .empty-ph { display: grid; place-items: center; text-align: center; font-weight: 800; font-size: .85rem; color: var(--polaroid-ink); opacity: .7; border: 2px dashed currentColor; background: none; }
 
 .tl-zoom { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 5; display: flex; align-items: center; background: #fffdf6; border-radius: 999px; box-shadow: 0 2px 6px rgba(0, 0, 0, .35); padding: 3px; }

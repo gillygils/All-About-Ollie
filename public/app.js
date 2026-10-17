@@ -365,9 +365,14 @@
       for (const d of days) {
         const k = Z.key(d.date);
         let g = out[out.length - 1];
-        if (!g || g.k !== k) out.push(g = { k, start: d.date, end: d.date, previews: [], events: [], photoCount: 0, videoCount: 0, dayCount: 0 });
+        if (!g || g.k !== k) {
+          out.push(g = { k, start: d.date, end: d.date, previews: [], eventPreviews: [], loose: [], looseCount: 0, events: [], photoCount: 0, videoCount: 0, dayCount: 0 });
+        }
         g.end = d.date;
         g.previews.push(...d.previews);
+        g.eventPreviews.push(...d.eventPreviews);
+        g.loose.push(...d.loose);
+        g.looseCount += d.looseCount;
         g.events.push(...d.events);
         g.photoCount += d.photoCount; g.videoCount += d.videoCount; g.dayCount++;
       }
@@ -375,10 +380,33 @@
     });
   }
 
+  // Where a loose photo lands around its day: a jittered spiral, seeded by the photo's id so it
+  // lands in the same spot every visit. With an event stack in the middle, they ring around it.
+  function scatterSpot(id, k, ring) {
+    let s = (id * 7919) % 233280;
+    const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
+    const rot = (rnd() - 0.5) * 26;
+    if (ring) {
+      // an event's stack sits in the middle: alternate left and right of it, a little further out each pair
+      const side = k % 2 ? 1 : -1;
+      const x = side * (118 + 26 * Math.floor(k / 2) + rnd() * 22);
+      const y = 10 + (Math.floor(k / 2) % 3) * 42 + (rnd() - 0.5) * 26;
+      return { x, y, rot };
+    }
+    const a = k * 2.39996 + rnd() * 0.8;                 // golden-angle spiral, jittered
+    const r = 16 + 30 * Math.sqrt(k) + rnd() * 18;
+    const x = Math.cos(a) * r * 1.25;                    // spread wide so neighbouring days overlap
+    const y = Math.max(-10, Math.min(95, Math.sin(a) * r * 0.5 + 30 + (rnd() - 0.5) * 24));
+    return { x, y, rot };
+  }
+
   function stackHTML(g, l) {
     const Z = ZOOM_LEVELS[l];
-    const top = g.previews.find((p) => p.kind === 'video') || g.previews[0]; // a video always goes on top
-    const under = g.previews.filter((p) => p !== top).slice(0, 2);
+    // On the Days view, photos without an event are scattered loose around the day; event photos stay stacked.
+    const scatter = l === MAXL && g.looseCount > 0;
+    const stackOf = scatter ? g.eventPreviews : g.previews;
+    const top = stackOf.find((p) => p.kind === 'video') || stackOf[0]; // a video always goes on top
+    const under = stackOf.filter((p) => p !== top).slice(0, 2);
     const pol = (p, cls, front) => `<div class="pol ${cls}">${front ? '<span class="pin"></span>' : ''}
       <div class="ph"><img src="/media/thumb/${p.id}" alt="" loading="lazy" draggable="false">${p.kind === 'video' ? `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}` : ''}</div>
       ${front ? `<div class="cap">${esc(p.caption || '')}</div>` : ''}</div>`;
@@ -389,10 +417,30 @@
     const stack = top
       ? `${under[1] ? pol(under[1], 'a') : ''}${under[0] ? pol(under[0], 'b') : ''}${pol(top, 'c', true)}<span class="tl-tag">${count}</span>`
       : `<div class="pol c" data-add><span class="pin"></span><div class="ph empty-ph">＋ Add the<br>first photos</div><div class="cap"></div></div>`;
+    const loose = scatter ? `<div class="tl-scatter">${g.loose.map((p, k) => {
+      const s = scatterSpot(p.id, k, !!top);
+      return `<div class="spol" data-photo="${p.id}" role="button" tabindex="0" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}"
+          style="left:${(s.x - 56).toFixed(1)}px;top:${s.y.toFixed(1)}px;--r:${s.rot.toFixed(1)}deg;z-index:${k + 1}">
+        <span class="pin"></span>
+        <div class="ph"><img src="/media/thumb/${p.id}" alt="" loading="lazy" draggable="false">${p.kind === 'video' ? `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}` : ''}</div>
+        <div class="cap">${esc(p.caption || '')}</div>
+      </div>`;
+    }).join('')}${top ? '' : `<button class="tl-tag scatter-tag" data-day>${count}</button>`}</div>` : '';
     return `<div class="tl-label"><b>${esc(Z.label(g))}</b><span>${esc(Z.sub(g))}</span></div>
       ${g.events.length ? `<div class="tl-badge" aria-hidden="true">${icons}</div>` : '<span class="pin"></span>'}
       <div class="tl-events">${names}</div>
-      <div class="tl-stack" role="button" tabindex="0" aria-label="${esc(`${Z.label(g)}: ${count || 'no photos yet'}`)}">${stack}</div>`;
+      ${scatter && !top ? '' : `<div class="tl-stack" role="button" tabindex="0" aria-label="${esc(`${Z.label(g)}: ${count || 'no photos yet'}`)}">${stack}</div>`}
+      ${loose}`;
+  }
+
+  // Tapping a scattered polaroid opens that photo, and you can swipe through the rest of the day.
+  async function openPhotoOnBoard(date, photoId) {
+    try {
+      const photos = await api(`/api/photos?date=${date}`);
+      const i = photos.findIndex((p) => p.id === photoId);
+      if (i < 0) return openDay(date);
+      openViewer(photos, i, { onChange: () => route() });
+    } catch (e) { oops(e); }
   }
 
   async function viewTimeline(main, { focusDate: jumpDate } = {}) {
@@ -619,6 +667,12 @@
 
     // Tap a stack: months/weeks/years dive in; a day opens its photos.
     stage.addEventListener('click', (e) => {
+      const spol = e.target.closest('.spol');
+      const dayTag = e.target.closest('.scatter-tag');
+      if (spol || dayTag) {
+        const g = groups[MAXL][+(spol || dayTag).closest('.stop').dataset.i];
+        return spol ? openPhotoOnBoard(g.start, +spol.dataset.photo) : openDay(g.start);
+      }
       const stack = e.target.closest('.tl-stack');
       const it = stack?.closest('.stop');
       if (!it || +it.dataset.l !== L) return;
@@ -631,7 +685,7 @@
         openUpload({ date: g.start, eventId: g.events[0]?.id });
       } else openDay(g.start);
     });
-    stage.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.classList.contains('tl-stack')) e.target.click(); });
+    stage.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.tl-stack, .spol')) e.target.click(); });
 
     const localX = (clientX) => clientX - stage.getBoundingClientRect().left;
 

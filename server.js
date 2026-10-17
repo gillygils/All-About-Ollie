@@ -432,17 +432,27 @@ app.get('/api/timeline', needUser, (req, res) => {
   const days = new Map();
   const day = (date) => {
     let d = days.get(date);
-    if (!d) days.set(date, (d = { date, count: 0, photoCount: 0, videoCount: 0, previews: [], events: [] }));
+    if (!d) {
+      days.set(date, (d = { date, count: 0, photoCount: 0, videoCount: 0, previews: [], eventPreviews: [], loose: [], looseCount: 0, events: [] }));
+    }
     return d;
   };
-  // Up to 3 previews per day for the polaroid stack — videos first, so one is always on top if there is one.
-  const rows = all(`SELECT p.id, p.date, p.kind, p.duration, p.caption FROM photos p WHERE ${VISIBLE}
+  // Previews for the polaroids — videos first, so one is always on top if there is one:
+  //  previews       up to 3 of the day's photos (stacks when zoomed out)
+  //  eventPreviews  up to 3 photos that belong to an event (the tidy stack on the Days view)
+  //  loose          up to 7 photos with no event (scattered around the day on the Days view)
+  const rows = all(`SELECT p.id, p.date, p.kind, p.duration, p.caption, p.event_id AS eventId FROM photos p WHERE ${VISIBLE}
                     ORDER BY p.date, (p.kind = 'video') DESC, p.id`, { uid: req.user.id });
   for (const p of rows) {
     const d = day(p.date);
+    const preview = { id: p.id, kind: p.kind, duration: p.duration, caption: p.caption };
     d.count++;
     if (p.kind === 'video') d.videoCount++; else d.photoCount++;
-    if (d.previews.length < 3) d.previews.push({ id: p.id, kind: p.kind, duration: p.duration, caption: p.caption });
+    if (d.previews.length < 3) d.previews.push(preview);
+    if (p.eventId) { if (d.eventPreviews.length < 3) d.eventPreviews.push(preview); } else {
+      d.looseCount++;
+      if (d.loose.length < 7) d.loose.push(preview);
+    }
   }
   for (const e of all('SELECT id, title, date, emoji FROM events ORDER BY date, id')) day(e.date).events.push(e);
   res.json({ site: siteInfo(), days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)) });

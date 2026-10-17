@@ -300,9 +300,10 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-stack { z-index: 20; }
 /* …and an event day sits above its neighbours' scattered photos */
 .stop.event-stack { z-index: 3; }
-/* Loose photos sit on their own board underneath all the days (see viewTimeline), so stacks always win.
+/* Loose photos sit on their own board, drawn before all the days (see viewTimeline), so event stacks
+   win — until one is hovered or tapped: its holder then rises above them (.stop:hover / .has-front).
    The days let taps through their empty space to the loose photos below. */
-.loose-board { position: absolute; inset: 0; z-index: 0; }
+.loose-board { position: absolute; inset: 0; }
 .stop { pointer-events: none; }
 .stop > :not(.flip-top), .flip-top > *, .stop.loose .spol, .stop.loose .scatter-tag { pointer-events: auto; }
 .stop.loose .tl-scatter { pointer-events: none; }

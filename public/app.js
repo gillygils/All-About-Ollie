@@ -667,15 +667,24 @@
         it.dataset.l = l; it.dataset.i = i;
         it.style.display = 'none';
         it.innerHTML = stackHTML(g, l, flip);
+        // Each loose photo gets its own holder on the loose board, moved with its day, so a tapped
+        // or hovered one can be raised above the event stacks on its own.
         const scatter = it.querySelector('.tl-scatter');
+        it.twins = [];
         if (scatter) {
-          const twin = document.createElement('div');
-          twin.className = 'stop loose';
-          twin.dataset.l = l; twin.dataset.i = i;
-          twin.style.display = 'none';
-          twin.appendChild(scatter);
-          looseBoard.appendChild(twin);
-          it.twin = twin;
+          for (const piece of [...scatter.children]) {
+            const twin = document.createElement('div');
+            twin.className = 'stop loose';
+            twin.dataset.l = l; twin.dataset.i = i;
+            twin.style.display = 'none';
+            const box = document.createElement('div');
+            box.className = 'tl-scatter';
+            box.appendChild(piece);
+            twin.appendChild(box);
+            looseBoard.appendChild(twin);
+            it.twins.push(twin);
+          }
+          scatter.remove();
         }
         el.appendChild(it);
         return it;
@@ -712,14 +721,14 @@
       }
       for (const i of el.shown) if (i < i0 || i > i1) {
         el.items[i].style.display = 'none';
-        if (el.items[i].twin) el.items[i].twin.style.display = 'none';
+        for (const tw of el.items[i].twins) tw.style.display = 'none';
       }
       el.shown = [];
       for (let i = i0; i <= i1; i++) {
         const it = el.items[i];
         it.style.display = 'flex';
         it.style.transform = `translate3d(${t + s * xOf(i) - 105}px,0,0) scale(${cs})`;
-        if (it.twin) { it.twin.style.display = 'flex'; it.twin.style.transform = it.style.transform; }
+        for (const tw of it.twins) { tw.style.display = 'flex'; tw.style.transform = it.style.transform; }
         el.shown.push(i);
       }
       el.style.pointerEvents = alpha > 0.5 ? '' : 'none';
@@ -924,15 +933,22 @@
       }
     }, { passive: false });
 
-    // Dragging / swiping with one finger or the mouse, with momentum.
+    // Dragging with the mouse (or a pen), with momentum. Fingers are handled further down with touch events.
     const pointers = new Set();
     let drag = null;
     let justDragged = false;
+    // A drag or swipe just ended: let it glide, swallow the click it would cause, and forget the
+    // remembered day if it wandered to another stack.
+    function endPan(v, lastMove) {
+      justDragged = true; setTimeout(() => { justDragged = false; }, 0);
+      if (performance.now() - lastMove < 80) glide(v);
+      const g = groups[L][nearestIdx(L, tx, scaleOf(f), vw() / 2)];
+      if (focusDate && (focusDate < g.start || focusDate > g.end)) focusDate = null;
+      stage.classList.remove('dragging');
+    }
     stage.addEventListener('pointerdown', (e) => {
       lastPointer = e.pointerType; // 'touch' on phones, 'mouse' on computers
-      // The first finger of a new gesture: forget any fingers we never saw lift. (A finger lifted
-      // off the board after a pinch never reports back here; left counted, it made every later
-      // one-finger drag look like a pinch, so the board wouldn't pan.)
+      if (e.pointerType === 'touch') return;
       if (e.isPrimary) pointers.clear();
       pointers.add(e.pointerId);
       if (pointers.size > 1) { drag = null; return; }
@@ -952,39 +968,73 @@
     const endPointer = (e) => {
       pointers.delete(e.pointerId);
       if (!drag || e.pointerId !== drag.id) return;
-      if (drag.moved) {
-        justDragged = true; setTimeout(() => { justDragged = false; }, 0);
-        if (performance.now() - drag.t < 80) glide(drag.v);
-        // wandered to another stack? forget the remembered day
-        const g = groups[L][nearestIdx(L, tx, scaleOf(f), vw() / 2)];
-        if (focusDate && (focusDate < g.start || focusDate > g.end)) focusDate = null;
-      }
+      if (drag.moved) endPan(drag.v, drag.t);
       drag = null;
-      stage.classList.remove('dragging');
     };
     stage.addEventListener('pointerup', endPointer);
     stage.addEventListener('pointercancel', endPointer);
     stage.addEventListener('click', (e) => { if (justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
 
-    // Two-finger pinch zooms (and pans with the fingers' midpoint), like Photos.
+    // Fingers: one swipes (with momentum), two pinch to zoom and pan with their midpoint, like Photos.
+    // Everything goes by the browser's own list of fingers on the board (e.touches), so nothing can
+    // get out of step after a pinch. (Keeping our own count of fingers is what left the board stuck
+    // after pinching on an iPhone until you pinched again.)
     let pinch = null;
+    let swipe = null;
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const mid = (t) => localX((t[0].clientX + t[1].clientX) / 2);
     stage.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 2) return;
-      stopAnim(); drag = null;
-      pinch = { d: dist(e.touches), m: mid(e.touches) };
+      lastPointer = 'touch';
+      stopAnim();
+      const n = e.touches.length;
+      if (n === 1) {
+        const t = e.touches[0];
+        pinch = null;
+        swipe = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, t: performance.now(), v: 0, moved: false };
+      } else {
+        if (swipe?.moved) stage.classList.remove('dragging');
+        swipe = null;
+        pinch = n === 2 ? { d: dist(e.touches), m: mid(e.touches) } : null;
+      }
     }, { passive: true });
     stage.addEventListener('touchmove', (e) => {
-      if (!pinch || e.touches.length !== 2) return;
+      if (pinch && e.touches.length === 2) {
+        e.preventDefault();
+        const d = dist(e.touches);
+        const m = mid(e.touches);
+        tx += m - pinch.m;
+        zoomBy(Math.log(d / pinch.d) / Math.log(G), m);
+        pinch.d = d; pinch.m = m;
+        return;
+      }
+      if (!swipe || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (t.identifier !== swipe.id) return;
+      if (!swipe.moved) {
+        const dx = t.clientX - swipe.x0, dy = t.clientY - swipe.y0;
+        if (Math.hypot(dx, dy) < 6) return;
+        if (Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // up/down: that's the page scrolling
+        swipe.moved = true; stage.classList.add('dragging'); liftPhoto(null);
+      }
       e.preventDefault();
-      const d = dist(e.touches);
-      const m = mid(e.touches);
-      tx += m - pinch.m;
-      zoomBy(Math.log(d / pinch.d) / Math.log(G), m);
-      pinch.d = d; pinch.m = m;
+      const now = performance.now();
+      const dx = t.clientX - swipe.x;
+      swipe.v = 0.8 * (dx / Math.max(1, now - swipe.t)) + 0.2 * swipe.v;
+      swipe.x = t.clientX; swipe.t = now;
+      panBy(dx);
     }, { passive: false });
-    stage.addEventListener('touchend', (e) => { if (pinch && e.touches.length < 2) { pinch = null; settle(); } });
+    const touchDone = (e) => {
+      if (pinch && e.touches.length < 2) { pinch = null; settle(); }
+      if (swipe && ![...e.touches].some((t) => t.identifier === swipe.id)) {
+        if (swipe.moved) {
+          if (e.type === 'touchend') endPan(swipe.v, swipe.t);
+          else stage.classList.remove('dragging');
+        }
+        swipe = null;
+      }
+    };
+    stage.addEventListener('touchend', touchDone);
+    stage.addEventListener('touchcancel', touchDone);
     stage.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: don't zoom the page
 
     // Swipe up or down on a stack holding several events: the front event goes to the back.
@@ -1002,7 +1052,7 @@
     stage.addEventListener('touchend', () => { stackSwipe = null; });
 
     // Live updates wait while you're swiping, pinching or mid-animation.
-    state.live.timelineBusy = () => stage.isConnected && (!!drag?.moved || !!pinch || anim !== 0);
+    state.live.timelineBusy = () => stage.isConnected && (!!drag?.moved || !!swipe?.moved || !!pinch || anim !== 0);
 
     // Keep things lined up if the window is resized or the phone rotated.
     const ro = new ResizeObserver(() => { if (stage.isConnected) { tx = clampTx(tx); render(); } else ro.disconnect(); });

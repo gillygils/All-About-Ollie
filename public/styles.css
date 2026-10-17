@@ -57,6 +57,9 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
+/* The page is never wider than the screen. If anything ever pokes out sideways it's clipped rather
+   than widening the page — a wider page is what makes iPhone Safari zoom out and back in. */
+html, body { overflow-x: clip; max-width: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -92,7 +95,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn.sm { padding: .35em .8em; font-size: .875rem; }
 .btn.icon { padding: .5em; width: 2.5em; height: 2.5em; }
 
-label.field { display: grid; gap: .3rem; font-weight: 700; font-size: .9rem; }
+label.field { display: grid; grid-template-columns: minmax(0, 1fr); gap: .3rem; font-weight: 700; font-size: .9rem; min-width: 0; }
 label.field .hint { font-weight: 400; color: var(--muted); font-size: .8rem; }
 input[type=text], input[type=password], input[type=email], input[type=date], input[type=number], select, textarea {
   width: 100%; padding: .65em .85em; border-radius: 12px;
@@ -106,8 +109,14 @@ textarea { resize: vertical; min-height: 4.5em; }
 .form { display: grid; gap: 1rem; }
 .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
 .row.end { justify-content: flex-end; }
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-@media (max-width: 560px) { .grid-2 { grid-template-columns: 1fr; } }
+/* minmax(0, 1fr): a column may shrink below its content's natural width (a long event name in a
+   dropdown, Safari's date box) instead of pushing the form wider than the screen */
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+@media (max-width: 560px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
+/* iPhone Safari draws date boxes and dropdowns at their own minimum width; make them fit instead */
+input[type=date] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; min-height: 2.9em; text-align: left; }
+input[type=date]::-webkit-date-and-time-value { text-align: left; }
+select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 .error { color: var(--danger); font-weight: 700; font-size: .9rem; min-height: 1.2em; margin: 0; }
 
 /* ---------------------------------------------------------------- gate screens (setup, PIN, login) */
@@ -382,12 +391,14 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 
 .modal-back {
   position: fixed; inset: 0; z-index: 50; background: rgba(20, 14, 10, .45); display: grid; place-items: center;
+  grid-template-columns: minmax(0, 1fr); /* the dialog can never be wider than the screen */
   padding: 16px; animation: fade .15s ease;
 }
 .modal {
-  width: 100%; max-width: 560px; max-height: calc(100vh - 32px); overflow: auto; background: var(--surface);
+  width: 100%; max-width: 560px; max-height: calc(100dvh - 32px); overflow: auto; overflow-x: hidden; min-width: 0; background: var(--surface);
   border-radius: 22px; box-shadow: var(--shadow); padding: 24px; animation: pop .18s ease;
 }
+@media (max-width: 640px) { .modal { padding: 20px 16px; } }
 .modal.wide { max-width: 980px; }
 .modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
 .modal-head h2 { font-size: 1.5rem; }
@@ -487,8 +498,9 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 
 /* ---------------------------------------------------------------- settings */
 
-.settings { display: grid; gap: 20px; max-width: 760px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; box-shadow: var(--shadow); }
+.settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; max-width: 760px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 22px; box-shadow: var(--shadow); min-width: 0; }
+@media (max-width: 640px) { .card { padding: 18px 16px; } }
 .card h3 { font-size: 1.25rem; margin-bottom: 4px; }
 .card > p { margin: 0 0 16px; color: var(--muted); }
 .card.admin { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }

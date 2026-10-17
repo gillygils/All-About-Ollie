@@ -295,7 +295,17 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-stack .c { left: 28px; top: 34px; transform: rotate(-1.5deg); z-index: 2; }
 .tl-tag { position: absolute; right: -10px; bottom: 0; z-index: 4; background: var(--polaroid); font-family: "Caveat", cursive; font-size: 1.15rem; color: var(--polaroid-ink); padding: 0 10px; transform: rotate(4deg); box-shadow: 1px 2px 4px rgba(0, 0, 0, .35); white-space: nowrap; }
 /* Days view: photos without an event, pinned loose around their day, overlapping like a real board */
-.tl-stack { z-index: 4; }
+/* An event's stack always sits above that day's loose photos (they go up to z-index 8); a hovered or
+   tapped loose photo (z-index 30) still lifts above it while you look at it. */
+.tl-stack { z-index: 20; }
+/* …and an event day sits above its neighbours' scattered photos */
+.stop.event-stack { z-index: 3; }
+/* Loose photos sit on their own board underneath all the days (see viewTimeline), so stacks always win.
+   The days let taps through their empty space to the loose photos below. */
+.loose-board { position: absolute; inset: 0; z-index: 0; }
+.stop { pointer-events: none; }
+.stop > :not(.flip-top), .flip-top > *, .stop.loose .spol, .stop.loose .scatter-tag { pointer-events: auto; }
+.stop.loose .tl-scatter { pointer-events: none; }
 .tl-events { position: relative; z-index: 9; }
 .tl-label { z-index: 10; } /* a day's date always sits on top of that day's own photos */
 @media (hover: hover) { .stop:hover { z-index: 5; } } /* lift the whole day so a hovered photo can come above its neighbours */

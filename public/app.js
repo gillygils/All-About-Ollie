@@ -648,6 +648,11 @@
     const layers = groups.map((gs, l) => {
       const el = document.createElement('div');
       el.className = 'layer';
+      // Loose photos live on their own board underneath every day, so no day's loose photos
+      // can ever cover an event stack — not even a neighbouring day's.
+      const looseBoard = document.createElement('div');
+      looseBoard.className = 'loose-board';
+      el.appendChild(looseBoard);
       let eventDays = 0;
       el.items = gs.map((g, i) => {
         const it = document.createElement('div');
@@ -658,9 +663,20 @@
         const hasStack = !(g.looseCount > 0 && g.eventPreviews.length === 0);
         const flip = l === MAXL && g.events.length > 0 && hasStack && eventDays++ % 2 === 1;
         if (flip) it.classList.add('flip');
+        if (l === MAXL && g.events.length > 0 && hasStack) it.classList.add('event-stack'); // drawn above neighbouring days' loose photos
         it.dataset.l = l; it.dataset.i = i;
         it.style.display = 'none';
         it.innerHTML = stackHTML(g, l, flip);
+        const scatter = it.querySelector('.tl-scatter');
+        if (scatter) {
+          const twin = document.createElement('div');
+          twin.className = 'stop loose';
+          twin.dataset.l = l; twin.dataset.i = i;
+          twin.style.display = 'none';
+          twin.appendChild(scatter);
+          looseBoard.appendChild(twin);
+          it.twin = twin;
+        }
         el.appendChild(it);
         return it;
       });
@@ -694,12 +710,16 @@
         i0 = Math.max(0, Math.floor((-320 - t) / (s * W)));
         i1 = Math.min(n - 1, Math.ceil((vw() + 320 - t) / (s * W)));
       }
-      for (const i of el.shown) if (i < i0 || i > i1) el.items[i].style.display = 'none';
+      for (const i of el.shown) if (i < i0 || i > i1) {
+        el.items[i].style.display = 'none';
+        if (el.items[i].twin) el.items[i].twin.style.display = 'none';
+      }
       el.shown = [];
       for (let i = i0; i <= i1; i++) {
         const it = el.items[i];
         it.style.display = 'flex';
         it.style.transform = `translate3d(${t + s * xOf(i) - 105}px,0,0) scale(${cs})`;
+        if (it.twin) { it.twin.style.display = 'flex'; it.twin.style.transform = it.style.transform; }
         el.shown.push(i);
       }
       el.style.pointerEvents = alpha > 0.5 ? '' : 'none';

@@ -315,7 +315,21 @@
     livePending = false;
   }
 
+  // The version of the site this page is running (stamped in by the server). Every time the live
+  // connection opens, the server says which version is current; if we're behind — the site was
+  // updated, or a home-screen shortcut woke up with old code — reload once it's safe.
+  const PAGE_BUILD = document.querySelector('meta[name=build]')?.content || null;
+  function reloadWhenSafe() {
+    const busy = document.hidden || $('.lb') || $('.modal-back') || state.live.timelineBusy?.();
+    if (busy) { setTimeout(reloadWhenSafe, 2000); return; } // not mid-upload, mid-comment or mid-swipe
+    location.reload();
+  }
+
   function onLive(msg) {
+    if (msg.type === 'hello') {
+      if (PAGE_BUILD && msg.build && msg.build !== PAGE_BUILD) reloadWhenSafe();
+      return;
+    }
     const thisPage = msg.tab && msg.tab === TAB_ID; // made right here — already on screen
     if (msg.type === 'photos' && !thisPage) {
       const n = msg.count === 1 ? 'a new memory' : `${msg.count} new memories`;

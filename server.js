@@ -278,6 +278,22 @@ const needUser = (req, res, next) => {
 const needAdmin = (req, res, next) =>
   needUser(req, res, () => (req.user.is_admin ? next() : fail(res, 'Only the admin can do that.', 403)));
 
+// ---------------------------------------------------------------- site version
+
+// A short code that changes whenever the page's files change (e.g. after `git pull`).
+const PUBLIC = path.join(__dirname, 'public');
+const SHELL_FILES = ['index.html', 'app.js', 'styles.css'];
+let buildCache = { key: '', id: '' };
+function currentBuild() {
+  const key = SHELL_FILES.map((f) => fs.statSync(path.join(PUBLIC, f)).mtimeMs).join('|');
+  if (key !== buildCache.key) {
+    const hash = crypto.createHash('sha1');
+    for (const f of SHELL_FILES) hash.update(fs.readFileSync(path.join(PUBLIC, f)));
+    buildCache = { key, id: hash.digest('hex').slice(0, 10) };
+  }
+  return buildCache.id;
+}
+
 // ---------------------------------------------------------------- live updates
 
 // Open pages keep one Server-Sent Events connection here. When something changes we send a
@@ -288,6 +304,7 @@ app.get('/api/live', needUser, (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' });
   res.flushHeaders();
   res.write('retry: 5000\n\n');
+  res.write(`data: ${JSON.stringify({ type: 'hello', build: currentBuild() })}\n\n`); // so out-of-date pages can reload
   const client = { res, uid: req.user.id };
   listeners.add(client);
   res.on('close', () => listeners.delete(client));
@@ -968,7 +985,19 @@ app.delete('/api/admin/users/:id', needAdmin, (req, res) => {
 
 // ---------------------------------------------------------------- static app & errors
 
-app.use(express.static(path.join(__dirname, 'public'), { index: 'index.html' }));
+// The page itself is always served fresh, with its script and stylesheet addresses stamped with the
+// current version — so phones (including home-screen shortcuts, which keep their own cache) never
+// run old code. Open pages compare versions when they connect and reload themselves if they're behind.
+app.get(['/', '/index.html'], (req, res) => {
+  const build = currentBuild();
+  const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8')
+    .replace('href="styles.css"', `href="styles.css?v=${build}"`)
+    .replace('src="app.js"', `src="app.js?v=${build}"`)
+    .replace('</head>', `  <meta name="build" content="${build}">\n</head>`);
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+});
+app.use(express.static(PUBLIC, { index: false }));
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {

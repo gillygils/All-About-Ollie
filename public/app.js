@@ -793,11 +793,33 @@
           } else if (step <= 0) break;
         }
       }
+      // Landed exactly on the finer row (a button or a settle stops right at the boundary): make it the
+      // current row. Left as "the coarser row, fully zoomed in", panning stopped at the coarser row's
+      // ends, so the board seemed stuck until you pinched a little further.
+      if (L < MAXL && f >= 1 - 1e-9) {
+        if (!pair) pair = makePair();
+        tx = tx + G * xOf(pair.a) - xOf(pair.c);
+        L++; f = 0; pair = null;
+      }
       render();
     }
 
-    const clampTx = (t) => Math.min(vw() / 2, Math.max(vw() / 2 - scaleOf(f) * xOf(groups[L].length - 1), t));
+    // How far the row can move: the first and last stacks can come to the middle, plus enough extra
+    // that everything around them — on the Days view, loose photos and fanned-out stacks reach about
+    // 205px either side — can be brought fully onto a narrow (phone) screen.
+    const edgeRoom = () => Math.max(0, (L + f > MAXL - 0.5 ? 205 : 110) * Math.sqrt(scaleOf(f)) - vw() / 2 + 14);
+    const txMax = () => vw() / 2 + edgeRoom();
+    const txMin = () => vw() / 2 - scaleOf(f) * xOf(groups[L].length - 1) - edgeRoom();
+    const clampTx = (t) => Math.min(txMax(), Math.max(txMin(), t));
     function panBy(dx) { tx = clampTx(tx + dx); render(); }
+    // A finger or mouse drag past either end stretches like a rubber band, so you can feel you've
+    // reached the end; it springs back when you let go.
+    function dragBy(dx) {
+      const over = tx > txMax() ? tx - txMax() : tx < txMin() ? txMin() - tx : 0;
+      const outward = (tx + dx > txMax() && dx > 0) || (tx + dx < txMin() && dx < 0);
+      tx += outward ? dx * Math.max(0.08, 0.45 * (1 - over / 140)) : dx;
+      render();
+    }
 
     // ---- animations
     let anim = 0;
@@ -959,7 +981,8 @@
     // remembered day if it wandered to another stack.
     function endPan(v, lastMove) {
       justDragged = true; setTimeout(() => { justDragged = false; }, 0);
-      if (performance.now() - lastMove < 80) glide(v);
+      if (Math.abs(clampTx(tx) - tx) > 0.5) panTo(tx);       // stretched past an end: spring back
+      else if (performance.now() - lastMove < 80) glide(v);
       const g = groups[L][nearestIdx(L, tx, scaleOf(f), vw() / 2)];
       if (focusDate && (focusDate < g.start || focusDate > g.end)) focusDate = null;
       stage.classList.remove('dragging');
@@ -981,7 +1004,7 @@
       const now = performance.now();
       drag.v = 0.8 * (dx / Math.max(1, now - drag.t)) + 0.2 * drag.v;
       drag.x = e.clientX; drag.t = now;
-      panBy(dx);
+      dragBy(dx);
     });
     const endPointer = (e) => {
       pointers.delete(e.pointerId);
@@ -1039,14 +1062,14 @@
       const dx = t.clientX - swipe.x;
       swipe.v = 0.8 * (dx / Math.max(1, now - swipe.t)) + 0.2 * swipe.v;
       swipe.x = t.clientX; swipe.t = now;
-      panBy(dx);
+      dragBy(dx);
     }, { passive: false });
     const touchDone = (e) => {
       if (pinch && e.touches.length < 2) { pinch = null; settle(); }
       if (swipe && ![...e.touches].some((t) => t.identifier === swipe.id)) {
         if (swipe.moved) {
           if (e.type === 'touchend') endPan(swipe.v, swipe.t);
-          else stage.classList.remove('dragging');
+          else { stage.classList.remove('dragging'); keepOnBoard(); }
         }
         swipe = null;
       }

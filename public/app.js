@@ -766,11 +766,14 @@
       };
       anim = requestAnimationFrame(step);
     }
+    // Zooming keeps your place but doesn't keep the row on the board — zoom out near an end and the
+    // stacks can end up off to the side. Once a zoom finishes, glide them back into view.
+    const keepOnBoard = () => { const c = clampTx(tx); if (Math.abs(c - tx) > 1) panTo(c); };
     function animateZoom(targetZ, F = vw() / 2, ms) {
       const dist = targetZ - (L + f);
-      if (Math.abs(dist) < 1e-4) return;
+      if (Math.abs(dist) < 1e-4) { keepOnBoard(); return; }
       let done = 0;
-      tween(ms || Math.min(900, 300 + 260 * Math.abs(dist)), (e) => { zoomBy(dist * e - done, F); done = dist * e; });
+      tween(ms || Math.min(900, 300 + 260 * Math.abs(dist)), (e) => { zoomBy(dist * e - done, F); done = dist * e; }, keepOnBoard);
     }
     const settle = (F = focusX) => animateZoom(Math.max(0, Math.min(MAXL, Math.round(L + f))), F, 260);
     function panTo(target) {
@@ -907,6 +910,10 @@
     let justDragged = false;
     stage.addEventListener('pointerdown', (e) => {
       lastPointer = e.pointerType; // 'touch' on phones, 'mouse' on computers
+      // The first finger of a new gesture: forget any fingers we never saw lift. (A finger lifted
+      // off the board after a pinch never reports back here; left counted, it made every later
+      // one-finger drag look like a pinch, so the board wouldn't pan.)
+      if (e.isPrimary) pointers.clear();
       pointers.add(e.pointerId);
       if (pointers.size > 1) { drag = null; return; }
       stopAnim();

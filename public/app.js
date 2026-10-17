@@ -471,10 +471,18 @@
   // Photos alternate below and above the twine. `tw` is how far down the board the twine runs;
   // y is measured from the scatter's anchor, which sits 60px below the twine.
   let boardTwine = 200;
-  function scatterSpot(id, k, ring) {
+  function scatterSpot(id, k, ring, flip = false) {
     let s = (id * 7919) % 233280;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     const rot = (rnd() - 0.5) * 26;
+    if (flip) {
+      // a flipped event day's stack and title fill the space above the twine, so its loose photos all
+      // go below, either side of the date (mirroring how an unflipped day keeps its title clear)
+      const side = k % 2 ? 1 : -1;
+      const x = side * (118 + 26 * Math.floor(k / 2) + rnd() * 22);
+      const y = 10 + (Math.floor(k / 2) % 3) * 42 + (rnd() - 0.5) * 26;
+      return { x, y, rot };
+    }
     const j = Math.floor(k / 2);                         // position within its half (above or below)
     if (k % 2) {
       // above the twine: in the gap between this day's date label and the next day's, so both stay
@@ -550,7 +558,7 @@
     }
 
     const loose = scatter ? `<div class="tl-scatter">${g.loose.map((p, k) => {
-      const s = scatterSpot(p.id, k, !!top);
+      const s = scatterSpot(p.id, k, !!top, flip);
       return `<div class="spol" data-photo="${p.id}" role="button" tabindex="0" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}"
           style="left:${(s.x - 56).toFixed(1)}px;top:${s.y.toFixed(1)}px;--r:${s.rot.toFixed(1)}deg;z-index:${k + 1}">
         <span class="pin"></span>

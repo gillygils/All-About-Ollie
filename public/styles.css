@@ -257,7 +257,8 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .stop.flip { padding-top: 0; }
 .flip-top { height: calc(var(--tw) - var(--badge-half, 17px)); display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 100%; }
 .flip-top .tl-stack { margin-top: 0; flex: none; }
-.flip-top .tl-events { min-height: 0; margin: 6px 0 4px; align-items: center; }
+/* the bottom polaroid hangs ~16px below the stack box, so leave room before the title */
+.flip-top .tl-events { min-height: 0; margin: 26px 0 4px; align-items: center; }
 .stop.flip .tl-badge { margin: 0 0 6px; }
 .stop.flip .tl-label { margin-top: 2px; }
 

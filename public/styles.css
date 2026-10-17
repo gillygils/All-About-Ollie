@@ -291,6 +291,12 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   .tl-zoom .lvl span { padding: 5px 7px; font-size: .72rem; }
   .tl-head p { display: none; }
 }
+@media (max-width: 400px) {
+  /* small phones (iPhone SE/mini): keep the whole zoom pill on the board */
+  .tl-zoom { padding: 2px; }
+  .tl-zoom button { width: 28px; height: 30px; }
+  .tl-zoom .lvl span { padding: 4px 5px; font-size: .68rem; }
+}
 
 .day-section + .day-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .day-section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }

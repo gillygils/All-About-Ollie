@@ -382,19 +382,31 @@
 
   // Where a loose photo lands around its day: a jittered spiral, seeded by the photo's id so it
   // lands in the same spot every visit. With an event stack in the middle, they ring around it.
+  // Photos alternate below and above the twine. `tw` is how far down the board the twine runs;
+  // y is measured from the scatter's anchor, which sits 60px below the twine.
+  let boardTwine = 200;
   function scatterSpot(id, k, ring) {
     let s = (id * 7919) % 233280;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     const rot = (rnd() - 0.5) * 26;
+    const j = Math.floor(k / 2);                         // position within its half (above or below)
+    if (k % 2) {
+      // above the twine: in the gap between this day's date label and the next day's, so both stay
+      // readable; several on one side just overlap each other more, bottoms hanging just over the line
+      const side = (j + Math.round(rnd())) % 2 ? 1 : -1;
+      const x = side * (104 + rnd() * 30);
+      const top = 14 + rnd() * Math.max(0, boardTwine - 124);
+      return { x, y: top - (boardTwine + 60), rot };
+    }
     if (ring) {
       // an event's stack sits in the middle: alternate left and right of it, a little further out each pair
-      const side = k % 2 ? 1 : -1;
-      const x = side * (118 + 26 * Math.floor(k / 2) + rnd() * 22);
-      const y = 10 + (Math.floor(k / 2) % 3) * 42 + (rnd() - 0.5) * 26;
+      const side = j % 2 ? 1 : -1;
+      const x = side * (118 + 26 * Math.floor(j / 2) + rnd() * 22);
+      const y = 10 + (Math.floor(j / 2) % 3) * 42 + (rnd() - 0.5) * 26;
       return { x, y, rot };
     }
-    const a = k * 2.39996 + rnd() * 0.8;                 // golden-angle spiral, jittered
-    const r = 16 + 30 * Math.sqrt(k) + rnd() * 18;
+    const a = j * 2.39996 + rnd() * 0.8;                 // golden-angle spiral, jittered
+    const r = 16 + 30 * Math.sqrt(j) + rnd() * 18;
     const x = Math.cos(a) * r * 1.25;                    // spread wide so neighbouring days overlap
     const y = Math.max(-10, Math.min(95, Math.sin(a) * r * 0.5 + 30 + (rnd() - 0.5) * 24));
     return { x, y, rot };
@@ -485,6 +497,7 @@
 
     const groups = buildGroups(data.days);
     const stage = $('#stage', main);
+    boardTwine = parseFloat(getComputedStyle(stage).getPropertyValue('--tw')) || 200; // set in CSS, smaller on phones
     const vw = () => stage.clientWidth;
     const xOf = (i) => i * W;
     const scaleOf = (ff) => Math.pow(G, ff);

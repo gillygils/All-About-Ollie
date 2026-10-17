@@ -234,13 +234,14 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 
 /* The stage is a window onto the timeline; the app moves and scales what's inside it itself.
    touch-action: pan-y keeps normal vertical page scrolling and hands sideways swipes and pinches to us. */
-.stage { position: relative; height: 392px; overflow: hidden; touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
+/* --tw is how far down the board the twine runs; the space above it is for photos pinned over the line */
+.stage { --tw: 200px; position: relative; height: calc(var(--tw) + 302px); overflow: hidden; touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
 .stage.dragging { cursor: grabbing; }
-.stage::before { content: ""; position: absolute; left: 0; right: 0; top: 90px; height: 3px; background: var(--twine); box-shadow: 0 2px 2px rgba(0, 0, 0, .35); }
+.stage::before { content: ""; position: absolute; left: 0; right: 0; top: var(--tw); height: 3px; background: var(--twine); box-shadow: 0 2px 2px rgba(0, 0, 0, .35); }
 .layer { position: absolute; inset: 0; will-change: opacity; }
 
 /* Each stack scales around the point where it touches the twine. */
-.stop { position: absolute; top: 0; left: 0; width: 210px; display: flex; flex-direction: column; align-items: center; transform-origin: 105px 90px; will-change: transform; }
+.stop { position: absolute; top: 0; left: 0; width: 210px; display: flex; flex-direction: column; align-items: center; padding-top: calc(var(--tw) - 90px); transform-origin: 105px var(--tw); will-change: transform; }
 .tl-label { position: relative; background: #fffdf6; padding: 5px 14px 6px; transform: rotate(-1.5deg); text-align: center; min-width: 116px; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
 .tl-label::before { content: ""; position: absolute; top: -6px; left: 50%; width: 34px; height: 12px; margin-left: -17px; background: rgba(255, 250, 230, .7); transform: rotate(3deg); }
 .tl-label b { display: block; font-family: "Fraunces", serif; font-size: 1.05rem; color: #3b2f28; white-space: nowrap; }
@@ -260,8 +261,9 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 /* Days view: photos without an event, pinned loose around their day, overlapping like a real board */
 .tl-stack { z-index: 4; }
 .tl-events { position: relative; z-index: 9; }
+.tl-label { z-index: 10; } /* a day's date always sits on top of that day's own photos */
 .stop:hover { z-index: 5; } /* lift the whole day so a hovered photo can come above its neighbours */
-.tl-scatter { position: absolute; left: 105px; top: 150px; width: 0; height: 0; }
+.tl-scatter { position: absolute; left: 105px; top: calc(var(--tw) + 60px); width: 0; height: 0; }
 .spol {
   position: absolute; width: 112px; background: var(--polaroid); padding: 6px 6px 22px; cursor: pointer;
   box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); transform: rotate(var(--r, 0deg)); transition: transform .18s;
@@ -287,6 +289,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   /* on phones the bottom tab bar would cover the zoom pill, so it sits at the top of the board */
   .tl-board { margin: 0 8px; }
   .tl-board .cork { padding: 58px 0 14px; }
+  .stage { --tw: 175px; }
   .tl-zoom { top: 12px; bottom: auto; }
   .tl-zoom .lvl span { padding: 5px 7px; font-size: .72rem; }
   .tl-head p { display: none; }

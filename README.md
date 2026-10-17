@@ -18,7 +18,7 @@ When the admin changes the PIN, every device has to enter the new one.
   - Tap a month or week to dive into it. Tap a day to see all its photos, grouped by event.
   - Swipe, scroll or drag to move along the timeline. Each stack shows Ollie's age, and you can jump to any date.
   - If a stack holds a video, the video goes on top.
-  - On the Days view, photos that aren't part of an event are pinned loose, scattered around their day and overlapping their neighbours like a real board. Tap one to open it. Event photos stay on a tidy stack in the middle.
+  - On the Days view, photos that aren't part of an event are pinned loose, scattered above and below the twine around their day and overlapping their neighbours like a real board. Tap one to open it. Event photos stay on a tidy stack in the middle.
 - **Events**: a pinned polaroid for each event with its title and a cover photo. Opening one shows only that event's photos and videos.
 - **Settings**: theme, name and email, and password. Each theme (Cream, Blush, Ocean, Sage, Midnight) tints the cork and frame, and Midnight uses dark polaroids. The admin also gets the baby's name and birth date, the family PIN, and the member list (reset a password, make someone admin, remove someone).
 

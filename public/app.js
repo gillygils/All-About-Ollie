@@ -475,8 +475,9 @@
   // below, or nothing); photos on that half keep their distance so they never land on a stack.
   // x is from the day's centre; y is the photo's top, from the scatter's anchor 60px below the twine.
   let boardTwine = 200;
-  function scatterSpot(id, k, ring, flip = false, block = {}) {
-    let s = (id * 7919) % 233280;
+  // `attempt` > 0 asks for another spot anywhere on its half (see looseSpots).
+  function scatterSpot(id, k, ring, flip = false, block = {}, attempt = 0) {
+    let s = (id * 7919 + attempt * 104729) % 233280;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     const rot = (rnd() - 0.5) * 26;
     const own = flip ? 'A' : ring ? 'B' : null;          // which half the day's own event stack is on
@@ -485,8 +486,8 @@
     const [top, bottom] = half === 'A' ? [-(boardTwine + 50), -154] : [-70, 108]; // photos are ~124px tall
     const reachL = block.l === half ? 70 : 150;
     const reachR = block.r === half ? 70 : 150;
-    const a = j * 2.39996 + rnd() * 0.9;                 // golden-angle spiral out from the date
-    const r = 0.25 + 0.75 * Math.sqrt((j + rnd() * 0.6) / 7);
+    const a = attempt ? rnd() * 2 * Math.PI : j * 2.39996 + rnd() * 0.9; // golden-angle spiral out from the date
+    const r = attempt ? 0.3 + 0.7 * rnd() : 0.25 + 0.75 * Math.sqrt((j + rnd() * 0.6) / 7);
     let x = Math.max(-reachL, Math.min(reachR, Math.cos(a) * r * 150));
     let y = Math.max(top, Math.min(bottom, (top + bottom) / 2 + Math.sin(a) * r * (bottom - top) / 2 + (rnd() - 0.5) * 20));
     // Keep clear of the date card and the badge on the twine (they'd sit on top of the photo):
@@ -499,6 +500,28 @@
       ({ x, y } = moves.reduce((m, c) => (Math.hypot(c.x - x, c.y - y) < Math.hypot(m.x - x, m.y - y) ? c : m)));
     }
     return { x, y, rot };
+  }
+
+  // A day's loose photos, placed together so none hides another: a photo whose spot would cover
+  // most of one already placed tries other spots on its half, keeping the one that's most clear.
+  // Returns null for a photo there's no room for.
+  // "Clear" means shifted at least 80px sideways or 88px up or down, so well over half of each still shows.
+  function looseSpots(g, ring, flip, block) {
+    const placed = [];
+    return g.loose.map((p, k) => {
+      let best = null;
+      for (let t = 0; t < 40; t++) {
+        const c = scatterSpot(p.id, k, ring, flip, block, t);
+        const clear = placed.reduce((m, o) => Math.min(m, Math.max(Math.abs(o.x - c.x) / 80, Math.abs(o.y - c.y) / 88)), Infinity);
+        if (!best || clear > best.clear) best = { ...c, clear };
+        if (clear >= 1) break;
+      }
+      // a crowded day with no room left: leave it off the board rather than hide another photo
+      // (it's still in the day's photos, a tap away)
+      if (best.clear < 0.9) return null;
+      placed.push(best);
+      return best;
+    });
   }
 
   // Which event's stack is in front, for days with several events — each person's own choice,
@@ -552,8 +575,10 @@
       stack = `<div class="pol c" data-add><span class="pin"></span><div class="ph empty-ph">＋ Add the<br>first photos</div><div class="cap"></div></div>`;
     }
 
+    const spots = scatter ? looseSpots(g, !!top, flip, block) : [];
     const loose = scatter ? `<div class="tl-scatter">${g.loose.map((p, k) => {
-      const s = scatterSpot(p.id, k, !!top, flip, block);
+      const s = spots[k];
+      if (!s) return '';
       return `<div class="spol" data-photo="${p.id}" role="button" tabindex="0" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}"
           style="left:${(s.x - 56).toFixed(1)}px;top:${s.y.toFixed(1)}px;--r:${s.rot.toFixed(1)}deg;z-index:${k + 1}">
         <span class="pin"></span>

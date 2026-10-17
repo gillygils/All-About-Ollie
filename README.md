@@ -22,7 +22,7 @@ When the admin changes the PIN, every device has to enter the new one.
 - **Events**: a pinned polaroid for each event with its title and a cover photo. Opening one shows only that event's photos and videos.
 - **Settings**: theme, name and email, and password. Each theme (Cream, Blush, Ocean, Sage, Midnight) tints the cork and frame, and Midnight uses dark polaroids. The admin also gets the baby's name and birth date, the family PIN, and the member list (reset a password, make someone admin, remove someone).
 
-People can edit or delete what they added. The admin can edit or delete anything they can see.
+People can edit or delete what they added. The admin can edit or delete anything they can see, including in bulk from **Settings → Manage photos**: a scrolling grid of every photo and video where you tap (or shift-click) to select and delete many at once without opening them.
 
 ## Comments and hearts
 

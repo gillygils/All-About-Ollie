@@ -727,10 +727,8 @@ app.put('/api/photos/:id/like', needUser, (req, res) => {
   res.json({ liked: !!req.body?.liked, likeCount: names.length, likedBy: names, firstLiker: names[0] || null });
 });
 
-app.delete('/api/photos/:id', needUser, async (req, res) => {
-  const photo = visiblePhoto(id(req.params.id), req.user);
-  if (!photo) return fail(res, 'Photo not found.', 404);
-  if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'You can only delete photos you added.', 403);
+// Removes a photo or video everywhere: database row (comments, hearts and access go with it) and every file.
+async function deletePhoto(photo) {
   const who = audience(photo.id);
   run('DELETE FROM photos WHERE id = ?', photo.id);
   broadcast({ type: 'photo', id: photo.id, removed: true }, who);
@@ -740,6 +738,13 @@ app.delete('/api/photos/:id', needUser, async (req, res) => {
   for (const f of await fs.promises.readdir(DIRS.orig)) {
     if (f.startsWith(photo.file)) await fs.promises.rm(path.join(DIRS.orig, f), { force: true });
   }
+}
+
+app.delete('/api/photos/:id', needUser, async (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  if (!canEdit(req.user, photo.uploaded_by)) return fail(res, 'You can only delete photos you added.', 403);
+  await deletePhoto(photo);
   res.json({ ok: true });
 });
 
@@ -892,6 +897,36 @@ app.post('/api/admin/pin', needAdmin, (req, res) => {
   });
   grantPinPass(req, res);
   res.json({ ok: true });
+});
+
+// Manage photos: every photo/video the admin can see, newest date first, 60 at a time.
+// `after` is the last item's "date|id" from the previous page.
+app.get('/api/admin/photos', needAdmin, (req, res) => {
+  const [d, i] = String(req.query.after || '').split('|');
+  const cursor = isDate(d) && id(i) ? { d, i: id(i) } : null;
+  const rows = all(
+    `${PHOTO_SELECT} WHERE ${VISIBLE} ${cursor ? 'AND (p.date < $d OR (p.date = $d AND p.id < $i))' : ''}
+     ORDER BY p.date DESC, p.id DESC LIMIT 60`,
+    { uid: req.user.id, ...(cursor || {}) },
+  );
+  res.json({
+    photos: rows,
+    total: get(`SELECT COUNT(*) AS n FROM photos p WHERE ${VISIBLE}`, { uid: req.user.id }).n,
+    next: rows.length === 60 ? `${rows[59].date}|${rows[59].id}` : null,
+  });
+});
+
+// Delete many at once (only ones the admin can see).
+app.post('/api/admin/photos/delete', needAdmin, async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(id).filter(Boolean))].slice(0, 500);
+  let deleted = 0;
+  for (const pid of ids) {
+    const photo = visiblePhoto(pid, req.user);
+    if (!photo) continue;
+    await deletePhoto(photo);
+    deleted++;
+  }
+  res.json({ deleted });
 });
 
 app.get('/api/admin/users', needAdmin, (req, res) => {

@@ -518,3 +518,35 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .toast { background: var(--text); color: var(--bg); padding: .7em 1.2em; border-radius: 14px; font-weight: 700; box-shadow: var(--shadow); animation: pop .2s; }
 .toast.err { background: var(--danger); color: #fff; }
 @media (max-width: 640px) { #toasts { bottom: 96px; } }
+
+/* ---------------------------------------------------------------- manage photos (admins) */
+
+.mg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.mg-item {
+  position: relative; aspect-ratio: 1; border: 0; padding: 0; border-radius: 10px; overflow: hidden; cursor: pointer;
+  background: var(--surface-2); outline: 3px solid transparent; outline-offset: -3px; transition: outline-color .12s;
+}
+.mg-item img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .15s, border-radius .15s; }
+.mg-item.on { outline-color: var(--accent); }
+.mg-item.on img { transform: scale(.86); border-radius: 6px; }
+.mg-check {
+  position: absolute; top: 6px; left: 6px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff;
+  background: rgba(0, 0, 0, .25); color: transparent; display: grid; place-items: center; font-weight: 800; font-size: .8rem;
+}
+.mg-item.on .mg-check { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.mg-badge { position: absolute; top: 6px; right: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: .7rem; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
+.mg-badge.lock { top: auto; bottom: 24px; }
+.mg-meta {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px; font-size: .7rem; font-weight: 700; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .6)); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mg-more { text-align: center; padding: 18px; }
+.mg-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 40; display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 999px; padding: 8px 8px 8px 18px; font-weight: 800; white-space: nowrap;
+}
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+@media (max-width: 640px) {
+  .mg-grid { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .mg-bar { bottom: calc(max(12px, env(safe-area-inset-bottom)) + 76px); }
+}

@@ -264,13 +264,14 @@
     const main = $('#main');
     if (!main) return;
     const [tab, id] = currentRoute();
-    $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
-    $('#fab').classList.toggle('hidden', tab === 'settings');
+    $$('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.tab === (tab === 'manage' ? 'settings' : tab)));
+    $('#fab').classList.toggle('hidden', tab === 'settings' || tab === 'manage');
     if (!quietRefresh) main.className = '';
     try {
       if (tab === 'events' && id) await viewEvent(main, Number(id));
       else if (tab === 'events') await viewEvents(main);
       else if (tab === 'settings') await viewSettings(main);
+      else if (tab === 'manage') await viewManage(main);
       else await viewTimeline(main, opts);
     } catch (e) {
       if (!e.handled) main.innerHTML = `<div class="empty"><div class="big">😕</div><h3>Couldn’t load this page</h3><p>${esc(e.message)}</p></div>`;
@@ -331,7 +332,8 @@
 
   async function applyLive() {
     if (!livePending || !state.user) return;
-    if (currentRoute()[0] === 'settings') { livePending = false; return; }
+    // Settings has nothing live; Manage photos would lose your selection if it redrew
+    if (['settings', 'manage'].includes(currentRoute()[0])) { livePending = false; return; }
     const busy = document.hidden || $('.lb') || $('.modal-back') || state.live.timelineBusy?.();
     if (busy) { liveTimer = setTimeout(applyLive, 1000); return; } // try again once they're done
     livePending = false;
@@ -1559,6 +1561,11 @@
         </section>
 
         <section class="card admin">
+          <h3>Photos &amp; videos <span class="pill">Admin</span></h3><p>Scroll through everything that’s been added and delete photos or videos in bulk, without opening each one.</p>
+          <div class="row end"><a class="btn primary" href="#/manage">Manage photos</a></div>
+        </section>
+
+        <section class="card admin">
           <h3>Family members <span class="pill">Admin</span></h3><p>People join by entering the PIN and creating an account. Remove anyone who shouldn’t have access.</p>
           <div id="members" class="muted">Loading…</div>
         </section>` : ''}
@@ -1607,6 +1614,114 @@
     });
 
     loadMembers($('#members', main));
+  }
+
+  // ---------------------------------------------------------------- manage photos (admins)
+  // A scrolling grid of every photo and video you can see, newest first. Tap to select
+  // (shift-click selects a range on a computer), then delete them all at once.
+  async function viewManage(main) {
+    if (!state.user.isAdmin) { location.hash = '#/settings'; return; }
+    const selected = new Set();
+    let total = 0;
+    let next = null;
+    let loadingMore = false;
+    let lastClicked = -1;
+    main.innerHTML = `
+      <a class="back" href="#/settings">← Settings</a>
+      <div class="page-head">
+        <div><h2>Manage photos</h2><p id="mg-sub">Loading…</p></div>
+        <div class="row"><button class="btn sm" id="mg-all">Select all loaded</button><button class="btn sm" id="mg-none">Clear</button></div>
+      </div>
+      <div class="mg-grid" id="mg-grid"></div>
+      <div class="mg-more muted small" id="mg-more"></div>
+      <div class="mg-bar hidden" id="mg-bar">
+        <span id="mg-count"></span>
+        <button class="btn sm ghost" id="mg-cancel">Clear</button>
+        <button class="btn sm danger-solid" id="mg-del">Delete</button>
+      </div>`;
+    const grid = $('#mg-grid', main);
+    const more = $('#mg-more', main);
+    const tiles = () => $$('.mg-item', grid);
+
+    const setSub = () => { $('#mg-sub', main).textContent = `${total} ${total === 1 ? 'photo or video' : 'photos and videos'}. Tap to select, then delete.`; };
+    const updateBar = () => {
+      $('#mg-bar', main).classList.toggle('hidden', !selected.size);
+      $('#mg-count', main).textContent = `${selected.size} selected`;
+    };
+    const select = (tile, on) => {
+      const pid = Number(tile.dataset.id);
+      if (on) selected.add(pid); else selected.delete(pid);
+      tile.classList.toggle('on', on);
+      tile.setAttribute('aria-pressed', on);
+    };
+
+    const tileHTML = (p) => `
+      <button class="mg-item" data-id="${p.id}" aria-pressed="false" title="${esc(`${fmtLong(p.date)} · added by ${p.uploaderName || 'a former member'}${p.caption ? ` · ${p.caption}` : ''}`)}">
+        <img loading="lazy" src="/media/thumb/${p.id}" alt="${esc(p.caption || '')}">
+        <span class="mg-check" aria-hidden="true">✓</span>
+        ${p.kind === 'video' ? `<span class="mg-badge">▶${p.duration ? ` ${fmtDur(p.duration)}` : ''}</span>` : ''}
+        ${p.restricted ? '<span class="mg-badge lock">🔒</span>' : ''}
+        <span class="mg-meta">${esc(fmt(p.date))} · ${esc(p.uploaderName || 'former member')}</span>
+      </button>`;
+
+    async function loadMore() {
+      if (loadingMore || next === undefined) return;
+      loadingMore = true;
+      more.textContent = 'Loading…';
+      try {
+        const r = await api(`/api/admin/photos${next ? `?after=${encodeURIComponent(next)}` : ''}`);
+        total = r.total;
+        setSub();
+        grid.insertAdjacentHTML('beforeend', r.photos.map(tileHTML).join(''));
+        next = r.next || undefined; // undefined = nothing more to load
+        more.textContent = next ? '' : (total ? 'That’s everything.' : 'No photos yet.');
+      } catch (e) { oops(e); more.textContent = ''; } finally { loadingMore = false; }
+    }
+
+    // load the next 60 when you scroll near the bottom
+    const io = new IntersectionObserver((entries) => {
+      if (!more.isConnected) return io.disconnect();
+      if (entries.some((en) => en.isIntersecting)) loadMore();
+    }, { rootMargin: '600px' });
+    io.observe(more);
+
+    grid.addEventListener('click', (e) => {
+      const tile = e.target.closest('.mg-item');
+      if (!tile) return;
+      const all = tiles();
+      const idx = all.indexOf(tile);
+      const on = !tile.classList.contains('on');
+      if (e.shiftKey && lastClicked >= 0) {
+        const [a, b] = [Math.min(lastClicked, idx), Math.max(lastClicked, idx)];
+        all.slice(a, b + 1).forEach((t) => select(t, on));
+      } else select(tile, on);
+      lastClicked = idx;
+      updateBar();
+    });
+    $('#mg-all', main).onclick = () => { tiles().forEach((t) => select(t, true)); updateBar(); };
+    const clear = () => { tiles().forEach((t) => select(t, false)); updateBar(); };
+    $('#mg-none', main).onclick = clear;
+    $('#mg-cancel', main).onclick = clear;
+
+    $('#mg-del', main).onclick = async () => {
+      const n = selected.size;
+      if (!n || !confirm(`Delete ${n === 1 ? 'this photo' : `these ${n} photos and videos`} for everyone? Their comments and hearts go too. This can’t be undone.`)) return;
+      const btn = $('#mg-del', main);
+      btn.disabled = true;
+      try {
+        const ids = [...selected];
+        const { deleted } = await api('/api/admin/photos/delete', { method: 'POST', body: { ids } });
+        ids.forEach((pid) => grid.querySelector(`.mg-item[data-id="${pid}"]`)?.remove());
+        selected.clear();
+        total -= deleted;
+        setSub();
+        updateBar();
+        lastClicked = -1;
+        toast(`${deleted} deleted`);
+      } catch (e) { oops(e); } finally { btn.disabled = false; }
+    };
+
+    await loadMore();
   }
 
   async function loadMembers(box) {

@@ -451,13 +451,14 @@
         const k = Z.key(d.date);
         let g = out[out.length - 1];
         if (!g || g.k !== k) {
-          out.push(g = { k, start: d.date, end: d.date, previews: [], eventPreviews: [], loose: [], looseCount: 0, events: [], photoCount: 0, videoCount: 0, dayCount: 0 });
+          out.push(g = { k, start: d.date, end: d.date, previews: [], eventPreviews: [], loose: [], looseCount: 0, byEvent: [], events: [], photoCount: 0, videoCount: 0, dayCount: 0 });
         }
         g.end = d.date;
         g.previews.push(...d.previews);
         g.eventPreviews.push(...d.eventPreviews);
         g.loose.push(...d.loose);
         g.looseCount += d.looseCount;
+        g.byEvent.push(...(d.byEvent || []));
         g.events.push(...d.events);
         g.photoCount += d.photoCount; g.videoCount += d.videoCount; g.dayCount++;
       }
@@ -497,23 +498,57 @@
     return { x, y, rot };
   }
 
-  function stackHTML(g, l) {
+  // Which event's stack is in front, for days with several events — each person's own choice,
+  // remembered on this device (date → event id). Loaded per user when the timeline opens.
+  let frontMap = {};
+  const frontKey = () => `sb_front_${state.user?.id}`;
+  function loadFront() { try { frontMap = JSON.parse(localStorage.getItem(frontKey()) || '{}'); } catch { frontMap = {}; } }
+  function saveFront() { try { localStorage.setItem(frontKey(), JSON.stringify(frontMap)); } catch { /* private mode */ } }
+  // The day's events with photos, front one first.
+  function eventOrder(g) {
+    const ids = g.byEvent.map((b) => b.eventId);
+    const i = Math.max(0, ids.indexOf(frontMap[g.start]));
+    return [...ids.slice(i), ...ids.slice(0, i)];
+  }
+
+  function stackHTML(g, l, flip = false) {
     const Z = ZOOM_LEVELS[l];
     // On the Days view, photos without an event are scattered loose around the day; event photos stay stacked.
     const scatter = l === MAXL && g.looseCount > 0;
+    const multi = l === MAXL && g.byEvent.length > 1; // several events that day: one stack each, piled up
+    const order = multi ? eventOrder(g) : [];
     const stackOf = scatter ? g.eventPreviews : g.previews;
-    const top = stackOf.find((p) => p.kind === 'video') || stackOf[0]; // a video always goes on top
-    const under = stackOf.filter((p) => p !== top).slice(0, 2);
     const pol = (p, cls, front) => `<div class="pol ${cls}">${front ? '<span class="pin"></span>' : ''}
       <div class="ph"><img src="/media/thumb/${p.id}" alt="" loading="lazy" draggable="false">${p.kind === 'video' ? `<span class="play">▶</span>${p.duration ? `<span class="dur">${fmtDur(p.duration)}</span>` : ''}` : ''}</div>
       ${front ? `<div class="cap">${esc(p.caption || '')}</div>` : ''}</div>`;
-    const icons = g.events.slice(0, 4).map((e) => esc(e.emoji || '⭐')).join('') + (g.events.length > 4 ? `<small>+${g.events.length - 4}</small>` : '');
-    const names = g.events.slice(0, 2).map((e) => `<a href="#/events/${e.id}">${esc(`${e.emoji || '⭐'} ${e.title}`)}</a>`).join('')
-      + (g.events.length > 2 ? `<em>+${g.events.length - 2} more</em>` : '');
-    const count = [g.photoCount && plural(g.photoCount, 'photo'), g.videoCount && plural(g.videoCount, 'video')].filter(Boolean).join(' · ');
-    const stack = top
-      ? `${under[1] ? pol(under[1], 'a') : ''}${under[0] ? pol(under[0], 'b') : ''}${pol(top, 'c', true)}<span class="tl-tag">${count}</span>`
-      : `<div class="pol c" data-add><span class="pin"></span><div class="ph empty-ph">＋ Add the<br>first photos</div><div class="cap"></div></div>`;
+    const countOf = (o) => [o.photoCount && plural(o.photoCount, 'photo'), o.videoCount && plural(o.videoCount, 'video')].filter(Boolean).join(' · ');
+    const pile = (previews, tag) => {
+      const top = previews.find((p) => p.kind === 'video') || previews[0]; // a video always goes on top
+      const under = previews.filter((p) => p !== top).slice(0, 2);
+      return `${under[1] ? pol(under[1], 'a') : ''}${under[0] ? pol(under[0], 'b') : ''}${pol(top, 'c', true)}<span class="tl-tag">${tag}</span>`;
+    };
+    const count = countOf(g);
+    const top = stackOf[0];
+    const isFront = (id) => multi && order[0] === id;
+
+    const icons = g.events.slice(0, 4).map((e) => `<span data-ev="${e.id}"${isFront(e.id) ? ' class="active"' : ''}>${esc(e.emoji || '⭐')}</span>`).join('')
+      + (g.events.length > 4 ? `<small>+${g.events.length - 4}</small>` : '');
+    const shownNames = multi ? 3 : 2;
+    const names = g.events.slice(0, shownNames).map((e) => `<a href="#/events/${e.id}" data-ev="${e.id}"${isFront(e.id) ? ' class="active"' : ''}>${esc(`${e.emoji || '⭐'} ${e.title}`)}</a>`).join('')
+      + (g.events.length > shownNames ? `<em>+${g.events.length - shownNames} more</em>` : '');
+
+    let stack;
+    if (multi) {
+      stack = order.map((evId, depth) => {
+        const be = g.byEvent.find((b) => b.eventId === evId);
+        return `<div class="ev-layer${depth ? '' : ' front'}" data-ev="${evId}" style="--d:${depth}">${pile(be.previews, countOf(be))}</div>`;
+      }).join('') + `<button class="ev-cycle" type="button" aria-label="Show the next event’s photos">${g.byEvent.findIndex((b) => b.eventId === order[0]) + 1} of ${order.length} ↻</button>`;
+    } else if (top) {
+      stack = pile(stackOf, count);
+    } else {
+      stack = `<div class="pol c" data-add><span class="pin"></span><div class="ph empty-ph">＋ Add the<br>first photos</div><div class="cap"></div></div>`;
+    }
+
     const loose = scatter ? `<div class="tl-scatter">${g.loose.map((p, k) => {
       const s = scatterSpot(p.id, k, !!top);
       return `<div class="spol" data-photo="${p.id}" role="button" tabindex="0" aria-label="Open ${p.kind === 'video' ? 'video' : 'photo'}"
@@ -523,11 +558,16 @@
         <div class="cap">${esc(p.caption || '')}</div>
       </div>`;
     }).join('')}${top ? '' : `<button class="tl-tag scatter-tag" data-day>${count}</button>`}</div>` : '';
-    return `<div class="tl-label"><b>${esc(Z.label(g))}</b><span>${esc(Z.sub(g))}</span></div>
-      ${g.events.length ? `<div class="tl-badge" aria-hidden="true">${icons}</div>` : '<span class="pin"></span>'}
-      <div class="tl-events">${names}</div>
-      ${scatter && !top ? '' : `<div class="tl-stack" role="button" tabindex="0" aria-label="${esc(`${Z.label(g)}: ${count || 'no photos yet'}`)}">${stack}</div>`}
-      ${loose}`;
+
+    const label = `<div class="tl-label"><b>${esc(Z.label(g))}</b><span>${esc(Z.sub(g))}</span></div>`;
+    const marker = g.events.length ? `<div class="tl-badge" aria-hidden="true">${icons}</div>` : '<span class="pin"></span>';
+    const eventsBlock = `<div class="tl-events">${names}</div>`;
+    const stackBlock = scatter && !top ? '' : `<div class="tl-stack${multi ? ' multi' : ''}" role="button" tabindex="0" aria-label="${esc(`${Z.label(g)}: ${count || 'no photos yet'}`)}">${stack}</div>`;
+    // Flipped (every other event day): stack and event name above the twine, badge on it, date below.
+    // .flip-top is exactly as tall as the space above the twine and stacks its contents at the bottom,
+    // so the badge lands on the line however long the event names are.
+    if (flip) return `<div class="flip-top">${stackBlock}${eventsBlock}</div>${marker}${label}${loose}`;
+    return `${label}${marker}${eventsBlock}${stackBlock}${loose}`;
   }
 
   // Tapping a scattered polaroid opens that photo, and you can swipe through the rest of the day.
@@ -582,7 +622,8 @@
 
     const groups = buildGroups(data.days);
     const stage = $('#stage', main);
-    boardTwine = parseFloat(getComputedStyle(stage).getPropertyValue('--tw')) || 200; // set in CSS, smaller on phones
+    boardTwine = parseFloat(getComputedStyle(stage).getPropertyValue('--tw')) || 200; // set in CSS
+    loadFront();
     const vw = () => stage.clientWidth;
     const xOf = (i) => i * W;
     const scaleOf = (ff) => Math.pow(G, ff);
@@ -607,10 +648,11 @@
         // its date below, so neighbouring events sit on opposite sides.
         // (a day whose photos are all loose has no stack to move, so it doesn't take a turn)
         const hasStack = !(g.looseCount > 0 && g.eventPreviews.length === 0);
-        if (l === MAXL && g.events.length && hasStack && eventDays++ % 2 === 1) it.classList.add('flip');
+        const flip = l === MAXL && g.events.length > 0 && hasStack && eventDays++ % 2 === 1;
+        if (flip) it.classList.add('flip');
         it.dataset.l = l; it.dataset.i = i;
         it.style.display = 'none';
-        it.innerHTML = stackHTML(g, l);
+        it.innerHTML = stackHTML(g, l, flip);
         el.appendChild(it);
         return it;
       });
@@ -778,8 +820,40 @@
       spol.closest('.stop').classList.add('has-front');
     }
 
+    // Several events on one day: bring one event's stack to the front (remembered per person).
+    function bringToFront(stopEl, evId) {
+      const g = groups[MAXL][+stopEl.dataset.i];
+      const ids = g.byEvent.map((b) => b.eventId);
+      if (!ids.includes(evId)) return;
+      frontMap[g.start] = evId;
+      saveFront();
+      const order = eventOrder(g);
+      $$('.ev-layer', stopEl).forEach((layer) => {
+        const d = order.indexOf(+layer.dataset.ev);
+        layer.style.setProperty('--d', d);
+        layer.classList.toggle('front', d === 0);
+      });
+      $$('.tl-badge [data-ev], .tl-events [data-ev]', stopEl).forEach((x) => x.classList.toggle('active', +x.dataset.ev === evId));
+      const chip = $('.ev-cycle', stopEl);
+      if (chip) chip.textContent = `${ids.indexOf(evId) + 1} of ${ids.length} ↻`;
+    }
+    const cycleStack = (stopEl) => bringToFront(stopEl, eventOrder(groups[MAXL][+stopEl.dataset.i])[1]);
+
     // Tap a stack: months/weeks/years dive in; a day opens its photos.
     stage.addEventListener('click', (e) => {
+      const cycleBtn = e.target.closest('.ev-cycle');
+      if (cycleBtn) { cycleStack(cycleBtn.closest('.stop')); return; }
+      const nameLink = e.target.closest('.tl-events a[data-ev]');
+      if (nameLink) {
+        const stopEl = nameLink.closest('.stop');
+        const g = +stopEl.dataset.l === MAXL ? groups[MAXL][+stopEl.dataset.i] : null;
+        const evId = +nameLink.dataset.ev;
+        if (g && g.byEvent.length > 1 && g.byEvent.some((b) => b.eventId === evId) && !nameLink.classList.contains('active')) {
+          e.preventDefault();
+          bringToFront(stopEl, evId);
+        }
+        return; // otherwise the link opens the event as usual
+      }
       const spol = e.target.closest('.spol');
       const dayTag = e.target.closest('.scatter-tag');
       // On a phone there's no hover: the first tap lifts a scattered photo to the front, the second opens it.
@@ -877,6 +951,20 @@
     }, { passive: false });
     stage.addEventListener('touchend', (e) => { if (pinch && e.touches.length < 2) { pinch = null; settle(); } });
     stage.addEventListener('gesturestart', (e) => e.preventDefault()); // Safari: don't zoom the page
+
+    // Swipe up or down on a stack holding several events: the front event goes to the back.
+    let stackSwipe = null;
+    stage.addEventListener('touchstart', (e) => {
+      const st = e.touches.length === 1 && e.target.closest('.tl-stack.multi');
+      stackSwipe = st ? { x: e.touches[0].clientX, y: e.touches[0].clientY, stop: st.closest('.stop'), done: false } : null;
+    }, { passive: true });
+    stage.addEventListener('touchmove', (e) => {
+      if (!stackSwipe || stackSwipe.done) return;
+      const dx = e.touches[0].clientX - stackSwipe.x;
+      const dy = e.touches[0].clientY - stackSwipe.y;
+      if (Math.abs(dy) > 36 && Math.abs(dy) > Math.abs(dx) * 1.2) { stackSwipe.done = true; cycleStack(stackSwipe.stop); }
+    }, { passive: true });
+    stage.addEventListener('touchend', () => { stackSwipe = null; });
 
     // Live updates wait while you're swiping, pinching or mid-animation.
     state.live.timelineBusy = () => stage.isConnected && (!!drag?.moved || !!pinch || anim !== 0);

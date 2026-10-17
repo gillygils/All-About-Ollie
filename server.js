@@ -453,7 +453,7 @@ app.get('/api/timeline', needUser, (req, res) => {
   const day = (date) => {
     let d = days.get(date);
     if (!d) {
-      days.set(date, (d = { date, count: 0, photoCount: 0, videoCount: 0, previews: [], eventPreviews: [], loose: [], looseCount: 0, events: [] }));
+      days.set(date, (d = { date, count: 0, photoCount: 0, videoCount: 0, previews: [], eventPreviews: [], loose: [], looseCount: 0, events: [], byEvent: {} }));
     }
     return d;
   };
@@ -469,12 +469,21 @@ app.get('/api/timeline', needUser, (req, res) => {
     d.count++;
     if (p.kind === 'video') d.videoCount++; else d.photoCount++;
     if (d.previews.length < 3) d.previews.push(preview);
-    if (p.eventId) { if (d.eventPreviews.length < 3) d.eventPreviews.push(preview); } else {
+    if (p.eventId) {
+      if (d.eventPreviews.length < 3) d.eventPreviews.push(preview);
+      // each event's own stack, for days with more than one event
+      const be = (d.byEvent[p.eventId] ||= { eventId: p.eventId, previews: [], photoCount: 0, videoCount: 0 });
+      if (be.previews.length < 3) be.previews.push(preview);
+      if (p.kind === 'video') be.videoCount++; else be.photoCount++;
+    } else {
       d.looseCount++;
       if (d.loose.length < 7) d.loose.push(preview);
     }
   }
   for (const e of all('SELECT id, title, date, emoji FROM events ORDER BY date, id')) day(e.date).events.push(e);
+  for (const d of days.values()) {
+    d.byEvent = d.events.map((e) => d.byEvent[e.id]).filter(Boolean); // in event order; only events with photos
+  }
   res.json({ site: siteInfo(), days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)) });
 });
 

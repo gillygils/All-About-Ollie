@@ -301,6 +301,9 @@ function broadcast(msg, only = null) {
   for (const c of listeners) if (!only || only.has(c.uid)) c.res.write(data);
 }
 // Who may hear about a photo: everyone (null), or for a private one, its uploader and access list.
+// Each open page sends a random id with its requests (X-Tab). Notices carry it so only the page
+// that made a change skips redrawing — your other devices, on the same account, still update.
+const tabOf = (req) => (/^[a-z0-9]{1,16}$/.test(req.get('x-tab') || '') ? req.get('x-tab') : null);
 function audience(photoId) {
   const p = get('SELECT restricted, uploaded_by FROM photos WHERE id = ?', photoId);
   if (!p || !p.restricted) return null;
@@ -624,7 +627,7 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
     }
   }
   if (saved.length) {
-    broadcast({ type: 'photos', count: saved.length, date, eventId, by: req.user.display_name, from: req.user.id },
+    broadcast({ type: 'photos', count: saved.length, date, eventId, by: req.user.display_name, from: req.user.id, tab: tabOf(req) },
       restricted ? new Set([req.user.id, ...allowed]) : null);
   }
   res.json({ saved, failed });
@@ -701,7 +704,7 @@ app.post('/api/photos/:id/comments', needUser, (req, res) => {
   const body = text(req.body?.body, 1000);
   if (!body) return fail(res, 'Write something first.');
   const r = run('INSERT INTO comments(photo_id, user_id, body) VALUES(?, ?, ?)', photo.id, req.user.id, body);
-  broadcast({ type: 'social', id: photo.id, from: req.user.id }, audience(photo.id));
+  broadcast({ type: 'social', id: photo.id, from: req.user.id, tab: tabOf(req) }, audience(photo.id));
   res.json({ ...get(`${COMMENT_SELECT} WHERE c.id = ?`, Number(r.lastInsertRowid)), canDelete: true });
 });
 
@@ -710,7 +713,7 @@ app.delete('/api/comments/:id', needUser, (req, res) => {
   if (!c || !visiblePhoto(c.photo_id, req.user)) return fail(res, 'Comment not found.', 404);
   if (!canEdit(req.user, c.user_id)) return fail(res, 'You can only delete your own comments.', 403);
   run('DELETE FROM comments WHERE id = ?', c.id);
-  broadcast({ type: 'social', id: c.photo_id, from: req.user.id }, audience(c.photo_id));
+  broadcast({ type: 'social', id: c.photo_id, from: req.user.id, tab: tabOf(req) }, audience(c.photo_id));
   res.json({ ok: true });
 });
 
@@ -720,7 +723,7 @@ app.put('/api/photos/:id/like', needUser, (req, res) => {
   if (req.body?.liked) run('INSERT OR IGNORE INTO likes(photo_id, user_id) VALUES(?, ?)', photo.id, req.user.id);
   else run('DELETE FROM likes WHERE photo_id = ? AND user_id = ?', photo.id, req.user.id);
   const names = likedBy(photo.id);
-  broadcast({ type: 'social', id: photo.id, from: req.user.id }, audience(photo.id));
+  broadcast({ type: 'social', id: photo.id, from: req.user.id, tab: tabOf(req) }, audience(photo.id));
   res.json({ liked: !!req.body?.liked, likeCount: names.length, likedBy: names, firstLiker: names[0] || null });
 });
 
@@ -805,7 +808,7 @@ app.post('/api/events', needUser, (req, res) => {
   if (ev.error) return fail(res, ev.error);
   const r = run('INSERT INTO events(title, date, emoji, description, created_by) VALUES(?, ?, ?, ?, ?)',
     ev.title, ev.date, ev.emoji, ev.description, req.user.id);
-  broadcast({ type: 'events', from: req.user.id });
+  broadcast({ type: 'events', from: req.user.id, tab: tabOf(req) });
   res.json({ id: Number(r.lastInsertRowid) });
 });
 
@@ -827,7 +830,7 @@ app.patch('/api/events/:id', needUser, (req, res) => {
       ev.title, ev.date, ev.emoji, ev.description, cover, current.id);
     run('UPDATE photos SET date = ? WHERE event_id = ?', ev.date, current.id);
   });
-  broadcast({ type: 'events', from: req.user.id });
+  broadcast({ type: 'events', from: req.user.id, tab: tabOf(req) });
   res.json({ ok: true });
 });
 
@@ -836,7 +839,7 @@ app.delete('/api/events/:id', needUser, (req, res) => {
   if (!current) return fail(res, 'Event not found.', 404);
   if (!canEdit(req.user, current.created_by)) return fail(res, 'Only the person who made this event (or the admin) can delete it.', 403);
   run('DELETE FROM events WHERE id = ?', current.id); // its photos stay on the timeline, just without the event
-  broadcast({ type: 'events', from: req.user.id });
+  broadcast({ type: 'events', from: req.user.id, tab: tabOf(req) });
   res.json({ ok: true });
 });
 

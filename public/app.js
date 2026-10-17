@@ -22,12 +22,16 @@
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const possessive = (name) => (/s$/i.test(name) ? `${name}’` : `${name}’s`);
 
+  // A random id for this open page. Changes we make carry it, so live updates skip redrawing
+  // only in this page — your phone and other tabs (same account) still update.
+  const TAB_ID = Math.random().toString(36).slice(2, 12);
+
   async function api(url, { method = 'GET', body } = {}) {
     const isForm = body instanceof FormData;
     const res = await fetch(url, {
       method,
       credentials: 'same-origin',
-      headers: body && !isForm ? { 'Content-Type': 'application/json' } : {},
+      headers: { 'X-Tab': TAB_ID, ...(body && !isForm ? { 'Content-Type': 'application/json' } : {}) },
       body: body && !isForm ? JSON.stringify(body) : body,
     });
     let data = null;
@@ -295,6 +299,13 @@
       try { msg = JSON.parse(e.data); } catch { return; }
       onLive(msg);
     };
+    // Phones drop the connection when locked or in the background, and notices sent meanwhile are
+    // missed. When it reconnects, refresh once to catch up.
+    let connectedBefore = false;
+    liveSource.onopen = () => {
+      if (connectedBefore) { livePending = true; applyLive(); }
+      connectedBefore = true;
+    };
   }
   function stopLive() {
     liveSource?.close();
@@ -304,14 +315,15 @@
   }
 
   function onLive(msg) {
-    const mine = msg.from === state.user?.id;
-    if (msg.type === 'photos' && !mine) {
-      toast(`📸 ${msg.by} added ${msg.count === 1 ? 'a new memory' : `${msg.count} new memories`}`);
+    const thisPage = msg.tab && msg.tab === TAB_ID; // made right here — already on screen
+    if (msg.type === 'photos' && !thisPage) {
+      const n = msg.count === 1 ? 'a new memory' : `${msg.count} new memories`;
+      toast(msg.from === state.user?.id ? `📸 ${n[0].toUpperCase()}${n.slice(1)} from your other device` : `📸 ${msg.by} added ${n}`);
     }
     // an open photo updates itself straight away (comments, hearts, a video finishing)
-    if (msg.type === 'social') state.live.onSocial?.(msg.id);
+    if (msg.type === 'social' && !thisPage) state.live.onSocial?.(msg.id);
     if (msg.type === 'photo') state.live.onPhoto?.(msg.id, msg.removed);
-    if (mine && msg.type !== 'photo') return; // your own changes already show on your screen
+    if (thisPage && msg.type !== 'photo') return;
     livePending = true;
     clearTimeout(liveTimer);
     liveTimer = setTimeout(applyLive, 600); // a burst of notices → one redraw
@@ -326,7 +338,13 @@
     quietRefresh = true;
     try { await route(); } finally { quietRefresh = false; }
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) applyLive(); });
+  // Back on the page after a while away (another tab, phone locked)? Refresh once in case anything was missed.
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 20000) livePending = true;
+    applyLive();
+  });
 
   // ---------------------------------------------------------------- timeline
 
@@ -1361,6 +1379,7 @@
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
       x.open('POST', '/api/photos');
+      x.setRequestHeader('X-Tab', TAB_ID);
       x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded); };
       x.onload = () => {
         let data = null;

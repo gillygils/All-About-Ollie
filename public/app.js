@@ -466,57 +466,27 @@
     });
   }
 
-  // Where a loose photo lands around its day: a jittered spiral, seeded by the photo's id so it
-  // lands in the same spot every visit. With an event stack in the middle, they ring around it.
-  // Photos alternate below and above the twine. `tw` is how far down the board the twine runs;
-  // y is measured from the scatter's anchor, which sits 60px below the twine.
+  // Where a loose photo lands around its day: scattered anywhere around the date on a jittered spiral,
+  // seeded by the photo's id so it lands in the same spot every visit. An event day's loose photos go
+  // on the other side of the twine from its event stack; a day without one uses both sides.
+  // `block` says where the neighbouring days' event stacks are ({ l, r }: 'A' above the twine, 'B'
+  // below, or nothing); photos on that half keep their distance so they never land on a stack.
+  // x is from the day's centre; y is the photo's top, from the scatter's anchor 60px below the twine.
   let boardTwine = 200;
-  // `block` says where the neighbouring days' event stacks are: { l, r } each 'A' (above the twine),
-  // 'B' (below) or nothing. A photo headed onto one goes to the other side instead, or, if both
-  // neighbours' stacks are on that half, across the twine — so loose photos never land on a stack.
   function scatterSpot(id, k, ring, flip = false, block = {}) {
-    const s = baseSpot(id, k, ring, flip);
-    const half = s.y + 67 < -60 ? 'A' : 'B';            // the twine is 60px above the anchor; photos are ~134px tall
-    const side = s.x < 0 ? 'l' : 'r';
-    const other = side === 'l' ? 'r' : 'l';
-    if (Math.abs(s.x) < 40 || block[side] !== half) return s;
-    if (block[other] !== half) return { ...s, x: -s.x };
-    const r = ((id * 131) % 97) / 97;
-    if (half === 'B') return { ...s, y: 14 + r * Math.max(0, boardTwine - 124) - (boardTwine + 60) };
-    return { ...s, y: 10 + r * 60 };
-  }
-  function baseSpot(id, k, ring, flip) {
     let s = (id * 7919) % 233280;
     const rnd = () => ((s = (s * 9301 + 49297) % 233280) / 233280);
     const rot = (rnd() - 0.5) * 26;
-    if (flip) {
-      // a flipped event day's stack and title fill the space above the twine, so its loose photos all
-      // go below, either side of the date (mirroring how an unflipped day keeps its title clear)
-      const side = k % 2 ? 1 : -1;
-      const x = side * (118 + 26 * Math.floor(k / 2) + rnd() * 22);
-      const y = 10 + (Math.floor(k / 2) % 3) * 42 + (rnd() - 0.5) * 26;
-      return { x, y, rot };
-    }
-    const j = Math.floor(k / 2);                         // position within its half (above or below)
-    if (k % 2) {
-      // above the twine: in the gap between this day's date label and the next day's, so both stay
-      // readable; several on one side just overlap each other more, bottoms hanging just over the line
-      const side = (j + Math.round(rnd())) % 2 ? 1 : -1;
-      const x = side * (104 + rnd() * 30);
-      const top = 14 + rnd() * Math.max(0, boardTwine - 124);
-      return { x, y: top - (boardTwine + 60), rot };
-    }
-    if (ring) {
-      // an event's stack sits in the middle: alternate left and right of it, a little further out each pair
-      const side = j % 2 ? 1 : -1;
-      const x = side * (118 + 26 * Math.floor(j / 2) + rnd() * 22);
-      const y = 10 + (Math.floor(j / 2) % 3) * 42 + (rnd() - 0.5) * 26;
-      return { x, y, rot };
-    }
-    const a = j * 2.39996 + rnd() * 0.8;                 // golden-angle spiral, jittered
-    const r = 16 + 30 * Math.sqrt(j) + rnd() * 18;
-    const x = Math.cos(a) * r * 1.25;                    // spread wide so neighbouring days overlap
-    const y = Math.max(-10, Math.min(95, Math.sin(a) * r * 0.5 + 30 + (rnd() - 0.5) * 24));
+    const own = flip ? 'A' : ring ? 'B' : null;          // which half the day's own event stack is on
+    const half = own === 'A' ? 'B' : own === 'B' ? 'A' : (k % 2 ? 'A' : 'B');
+    const j = own ? k : Math.floor(k / 2);               // its place among the photos on that half
+    const [top, bottom] = half === 'A' ? [-(boardTwine + 50), -154] : [-70, 108]; // photos are ~124px tall
+    const reachL = block.l === half ? 70 : 150;
+    const reachR = block.r === half ? 70 : 150;
+    const a = j * 2.39996 + rnd() * 0.9;                 // golden-angle spiral out from the date
+    const r = 0.25 + 0.75 * Math.sqrt((j + rnd() * 0.6) / 7);
+    const x = Math.max(-reachL, Math.min(reachR, Math.cos(a) * r * 150));
+    const y = Math.max(top, Math.min(bottom, (top + bottom) / 2 + Math.sin(a) * r * (bottom - top) / 2 + (rnd() - 0.5) * 20));
     return { x, y, rot };
   }
 

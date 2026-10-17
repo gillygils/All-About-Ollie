@@ -271,13 +271,16 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-stack { z-index: 4; }
 .tl-events { position: relative; z-index: 9; }
 .tl-label { z-index: 10; } /* a day's date always sits on top of that day's own photos */
-.stop:hover { z-index: 5; } /* lift the whole day so a hovered photo can come above its neighbours */
+@media (hover: hover) { .stop:hover { z-index: 5; } } /* lift the whole day so a hovered photo can come above its neighbours */
 .tl-scatter { position: absolute; left: 105px; top: calc(var(--tw) + 60px); width: 0; height: 0; }
 .spol {
   position: absolute; width: 112px; background: var(--polaroid); padding: 6px 6px 22px; cursor: pointer;
   box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); transform: rotate(var(--r, 0deg)); transition: transform .18s;
 }
-.spol:hover, .spol:focus-visible { transform: rotate(0) scale(1.12); z-index: 30 !important; }
+.spol:focus-visible, .spol.front { transform: rotate(0) scale(1.12); z-index: 30 !important; }
+@media (hover: hover) { .spol:hover { transform: rotate(0) scale(1.12); z-index: 30 !important; } } /* mouse only — on phones a tap lifts it (.front) */
+.spol.front { transform: rotate(0) scale(1.22); box-shadow: 0 2px 4px rgba(0, 0, 0, .2), 6px 14px 26px rgba(0, 0, 0, .45); } /* lifted by a tap on a phone */
+.stop.has-front { z-index: 6; }
 .spol .ph { position: relative; height: 96px; background: rgba(0, 0, 0, .12); overflow: hidden; }
 .spol .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .spol .cap { position: absolute; left: 3px; right: 3px; bottom: 2px; text-align: center; font-family: "Caveat", cursive; font-size: .98rem; line-height: 1.2; color: var(--polaroid-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

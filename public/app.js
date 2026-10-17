@@ -108,6 +108,57 @@
     });
   }
 
+  // Swipe right to go back, like iPhone apps (touch screens only — touch events never fire for a mouse).
+  // Only a clearly sideways swipe counts, so scrolling up and down is untouched. In Safari itself (not
+  // the home-screen app), swipes starting at the very left edge are left to Safari's own back gesture.
+  const STANDALONE = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  function swipeBack(el, onBack) {
+    let s = null;
+    el.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      s = null;
+      if (e.touches.length !== 1 || (!STANDALONE && t.clientX < 24)) return;
+      if (e.target.closest('input, textarea, select, video')) return;
+      s = { x: t.clientX, y: t.clientY, t: performance.now(), on: false, dx: 0 };
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+      if (!s) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (!s.on) {
+        if (dx > 14 && Math.abs(dy) < dx * 0.55) { s.on = true; el.style.transition = 'none'; } // sideways: it's a swipe
+        else if (Math.abs(dy) > 10 || dx < -10) { s = null; return; }                       // scrolling: leave it
+        else return;
+      }
+      e.preventDefault();
+      s.dx = Math.max(0, dx);
+      el.style.transform = `translateX(${s.dx}px)`;
+      el.style.opacity = String(1 - Math.min(0.5, s.dx / (el.offsetWidth * 2)));
+    }, { passive: false });
+    const end = () => {
+      if (!s?.on) { s = null; return; }
+      const fast = s.dx / Math.max(1, performance.now() - s.t) > 0.5 && s.dx > 40;
+      el.style.transition = 'transform .22s ease, opacity .22s ease';
+      if (s.dx > el.offsetWidth * 0.3 || fast) {
+        el.style.transform = `translateX(${el.offsetWidth}px)`;
+        el.style.opacity = '0';
+        setTimeout(onBack, 200);
+      } else {
+        el.style.transform = '';
+        el.style.opacity = '';
+      }
+      s = null;
+    };
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+  }
+
+  // Back to the page you came from (timeline or the Events list), or `fallback` if you landed here directly.
+  let inAppSteps = 0;
+  window.addEventListener('hashchange', () => { inAppSteps++; });
+  const goBack = (fallback) => { if (inAppSteps > 0) history.back(); else location.hash = fallback; };
+
   function modal(inner, { cls = '', z } = {}) {
     const back = document.createElement('div');
     back.className = 'modal-back';
@@ -712,10 +763,22 @@
     $('#newEvent', main).onclick = () => openEventForm();
     $('#jump', main).onchange = (e) => e.target.value && goToDate(e.target.value);
 
+    // A scattered photo lifted by a tap (phones); its day is raised too so it can sit above the neighbours.
+    let lastPointer = 'mouse';
+    function liftPhoto(spol) {
+      $$('.spol.front', stage).forEach((s) => { s.classList.remove('front'); s.closest('.stop')?.classList.remove('has-front'); });
+      if (!spol) return;
+      spol.classList.add('front');
+      spol.closest('.stop').classList.add('has-front');
+    }
+
     // Tap a stack: months/weeks/years dive in; a day opens its photos.
     stage.addEventListener('click', (e) => {
       const spol = e.target.closest('.spol');
       const dayTag = e.target.closest('.scatter-tag');
+      // On a phone there's no hover: the first tap lifts a scattered photo to the front, the second opens it.
+      if (spol && lastPointer === 'touch' && !spol.classList.contains('front')) { liftPhoto(spol); return; }
+      liftPhoto(null);
       if (spol || dayTag) {
         const g = groups[MAXL][+(spol || dayTag).closest('.stop').dataset.i];
         return spol ? openPhotoOnBoard(g.start, +spol.dataset.photo) : openDay(g.start);
@@ -755,6 +818,7 @@
     let drag = null;
     let justDragged = false;
     stage.addEventListener('pointerdown', (e) => {
+      lastPointer = e.pointerType; // 'touch' on phones, 'mouse' on computers
       pointers.add(e.pointerId);
       if (pointers.size > 1) { drag = null; return; }
       stopAnim();
@@ -764,7 +828,7 @@
       if (!drag || e.pointerId !== drag.id || pointers.size > 1) return;
       const dx = e.clientX - drag.x;
       if (!drag.moved && Math.abs(dx) < 6) return;
-      if (!drag.moved) { drag.moved = true; stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId); }
+      if (!drag.moved) { drag.moved = true; stage.classList.add('dragging'); stage.setPointerCapture(e.pointerId); liftPhoto(null); }
       const now = performance.now();
       drag.v = 0.8 * (dx / Math.max(1, now - drag.t)) + 0.2 * drag.v;
       drag.x = e.clientX; drag.t = now;
@@ -842,6 +906,7 @@
     $('[data-add]', m.el).onclick = () => { m.close(); openUpload({ date }); };
     $$('[data-add-event]', m.el).forEach((b) => { b.onclick = () => { m.close(); openUpload({ eventId: Number(b.dataset.addEvent) }); }; });
     $$('.day-section', m.el).forEach((el) => bindGrid(el, sections[el.dataset.s].photos, { onChange: () => { m.close(); route(); } }));
+    swipeBack(m.el, m.close); // swipe right to close, back to the timeline
   }
 
   // ---------------------------------------------------------------- photo grid & viewer
@@ -983,14 +1048,60 @@
     };
     document.addEventListener('keydown', onKey);
 
-    let touchX = null;
-    lb.addEventListener('touchstart', (e) => { touchX = e.target.closest('.lb-panel') ? null : e.touches[0].clientX; }, { passive: true });
-    lb.addEventListener('touchend', (e) => {
-      if (touchX == null || lb.classList.contains('zoomed')) return;
-      const dx = e.changedTouches[0].clientX - touchX;
-      touchX = null;
-      if (Math.abs(dx) > 50) go(dx > 0 ? -1 : 1);
-    });
+    // Touch: swipe left/right for the next photo; pull down to close (like the Photos app) — the
+    // photo follows your finger and the background fades; let go far enough and it closes.
+    let touch = null;
+    const chrome = () => [$('.lb-top', lb), $('.lb-bottom', lb)].filter(Boolean);
+    lb.addEventListener('touchstart', (e) => {
+      touch = null;
+      if (e.touches.length !== 1 || lb.classList.contains('zoomed') || e.target.closest('.lb-panel, .lb-top')) return;
+      const t = e.touches[0];
+      touch = { x: t.clientX, y: t.clientY, t: performance.now(), axis: null, dy: 0 };
+    }, { passive: true });
+    lb.addEventListener('touchmove', (e) => {
+      if (!touch) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touch.x;
+      const dy = t.clientY - touch.y;
+      if (!touch.axis) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        touch.axis = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x'; // decide once, then stick with it
+      }
+      if (touch.axis !== 'y') return;
+      e.preventDefault();
+      touch.dy = Math.max(0, dy);
+      const stage = $('.lb-stage', lb);
+      stage.style.transition = 'none';
+      stage.style.transform = `translateY(${touch.dy}px) scale(${1 - Math.min(0.25, touch.dy / 1600)})`;
+      lb.style.backgroundColor = `rgba(10, 8, 6, ${0.94 * (1 - Math.min(1, touch.dy / 450))})`;
+      chrome().forEach((c) => { c.style.opacity = String(1 - Math.min(1, touch.dy / 150)); });
+    }, { passive: false });
+    const touchDone = (e) => {
+      const t = touch;
+      touch = null;
+      if (!t) return;
+      if (t.axis === 'x') {
+        const dx = e.changedTouches[0].clientX - t.x;
+        if (Math.abs(dx) > 50) go(dx > 0 ? -1 : 1);
+        return;
+      }
+      if (t.axis !== 'y') return;
+      const stage = $('.lb-stage', lb);
+      const fast = t.dy / Math.max(1, performance.now() - t.t) > 0.6 && t.dy > 40;
+      stage.style.transition = 'transform .22s ease';
+      lb.style.transition = 'background-color .22s ease';
+      if (t.dy > 120 || fast) {
+        stage.style.transform = `translateY(${innerHeight}px) scale(.8)`;
+        lb.style.backgroundColor = 'rgba(10, 8, 6, 0)';
+        setTimeout(close, 200);
+      } else {
+        stage.style.transform = '';
+        lb.style.backgroundColor = '';
+        chrome().forEach((c) => { c.style.opacity = ''; });
+      }
+    };
+    lb.addEventListener('touchend', touchDone);
+    lb.addEventListener('touchcancel', touchDone);
 
     // Size the photo so it and the ♡ 💬 row under it fit on screen together.
     function fit() {
@@ -1477,6 +1588,7 @@
     const { event: ev, photos } = data;
     const sub = [fmtLong(ev.date), age(ev.date), mediaCount(photos)].filter(Boolean).join(' · ');
     main.innerHTML = `
+      <div class="swipe-page">
       <a class="back" href="#/events">← All events</a>
       <div class="ev-hero">
         <div class="ev-emoji">${esc(ev.emoji || '⭐')}</div>
@@ -1492,7 +1604,9 @@
       </div>
       <div class="board"><div class="cork">
         ${photos.length ? photoGrid(photos) : '<div class="empty"><div class="big">📷</div><h3>Nothing pinned yet</h3><p>Be the first to add photos or videos from this day.</p></div>'}
-      </div></div>`;
+      </div></div>
+      </div>`;
+    swipeBack($('.swipe-page', main), () => goBack('#/events')); // swipe right → back to the timeline or Events
     $('[data-act=add]', main).onclick = () => openUpload({ eventId: ev.id });
     $('[data-act=edit]', main)?.addEventListener('click', () => openEventForm(ev));
     $('[data-act=del]', main)?.addEventListener('click', async () => {

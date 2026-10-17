@@ -599,9 +599,15 @@
     const layers = groups.map((gs, l) => {
       const el = document.createElement('div');
       el.className = 'layer';
+      let eventDays = 0;
       el.items = gs.map((g, i) => {
         const it = document.createElement('div');
         it.className = 'stop';
+        // Days view: event days take turns — every other one has its photo stack above the twine and
+        // its date below, so neighbouring events sit on opposite sides.
+        // (a day whose photos are all loose has no stack to move, so it doesn't take a turn)
+        const hasStack = !(g.looseCount > 0 && g.eventPreviews.length === 0);
+        if (l === MAXL && g.events.length && hasStack && eventDays++ % 2 === 1) it.classList.add('flip');
         it.dataset.l = l; it.dataset.i = i;
         it.style.display = 'none';
         it.innerHTML = stackHTML(g, l);

@@ -244,13 +244,20 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 /* The stage is a window onto the timeline; the app moves and scales what's inside it itself.
    touch-action: pan-y keeps normal vertical page scrolling and hands sideways swipes and pinches to us. */
 /* --tw is how far down the board the twine runs; the space above it is for photos pinned over the line */
-.stage { --tw: 200px; position: relative; height: calc(var(--tw) + 302px); overflow: hidden; touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
+.stage { --tw: 252px; position: relative; height: calc(var(--tw) + 302px); overflow: hidden; touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
 .stage.dragging { cursor: grabbing; }
 .stage::before { content: ""; position: absolute; left: 0; right: 0; top: var(--tw); height: 3px; background: var(--twine); box-shadow: 0 2px 2px rgba(0, 0, 0, .35); }
 .layer { position: absolute; inset: 0; will-change: opacity; }
 
 /* Each stack scales around the point where it touches the twine. */
 .stop { position: absolute; top: 0; left: 0; width: 210px; display: flex; flex-direction: column; align-items: center; padding-top: calc(var(--tw) - 90px); transform-origin: 105px var(--tw); will-change: transform; }
+/* Flipped event day: photo stack above the twine, the event badge on it, date and event name below.
+   The padding puts the badge's centre exactly on the twine, like an unflipped day. */
+.stop.flip { padding-top: calc(var(--tw) - 243px); }
+.stop.flip .tl-stack { order: 1; margin-top: 0; }
+.stop.flip .tl-badge { order: 2; }
+.stop.flip .tl-label { order: 3; margin-top: 4px; }
+.stop.flip .tl-events { order: 4; margin-top: 8px; }
 .tl-label { position: relative; background: #fffdf6; padding: 5px 14px 6px; transform: rotate(-1.5deg); text-align: center; min-width: 116px; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
 .tl-label::before { content: ""; position: absolute; top: -6px; left: 50%; width: 34px; height: 12px; margin-left: -17px; background: rgba(255, 250, 230, .7); transform: rotate(3deg); }
 .tl-label b { display: block; font-family: "Fraunces", serif; font-size: 1.05rem; color: #3b2f28; white-space: nowrap; }
@@ -301,7 +308,7 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
   /* on phones the bottom tab bar would cover the zoom pill, so it sits at the top of the board */
   .tl-board { margin: 0 8px; }
   .tl-board .cork { padding: 58px 0 14px; }
-  .stage { --tw: 175px; }
+  .stage { --tw: 252px; } /* same on phones: a flipped event stack needs the full height above the line */
   .tl-zoom { top: 12px; bottom: auto; }
   .tl-zoom .lvl span { padding: 5px 7px; font-size: .72rem; }
   .tl-head p { display: none; }

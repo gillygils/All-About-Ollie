@@ -1382,28 +1382,33 @@
     lb.addEventListener('touchend', touchDone);
     lb.addEventListener('touchcancel', touchDone);
 
-    // Size the photo so it and the ♡ 💬 row under it fit on screen together.
+    // Size the polaroid so it (frame and handwritten strip included) and the ♡ 💬 row under it fit
+    // on screen together. Twice, because the strip's height depends on how wide the photo ends up.
     function fit() {
       const fig = $('.lb-figure', lb);
       const stage = $('.lb-stage', lb);
       if (!fig || lb.classList.contains('zoomed')) return;
       const p = photos[i];
-      const below = $('.lb-under', fig).offsetHeight;
+      const pol = getComputedStyle($('.lb-pol', fig));
+      const padX = parseFloat(pol.paddingLeft) + parseFloat(pol.paddingRight);
       const side = window.innerWidth <= 640 ? 16 : 128;
-      const availW = stage.clientWidth - side;
-      const availH = stage.clientHeight - below - 12;
       const w = p.width || 4, h = p.height || 3;
-      const s = Math.min(availW / w, availH / h, 1);
-      // never narrower than 260px, so the ♡ 💬 row has room under a tall, thin photo
-      fig.style.width = `${Math.max(260, Math.floor(w * s))}px`;
-      $('.lb-media', fig).style.height = `${Math.floor(h * s)}px`;
+      for (let pass = 0; pass < 2; pass++) {
+        const below = $('.lb-under', fig).offsetHeight + $('.lb-strip', fig).offsetHeight + parseFloat(pol.paddingTop);
+        const s = Math.min((stage.clientWidth - side - padX) / w, (stage.clientHeight - below - 24) / h, 1);
+        // never narrower than 260px, so the ♡ 💬 row has room under a tall, thin photo
+        fig.style.width = `${Math.max(260, Math.floor(w * s) + padX)}px`;
+        $('.lb-media', fig).style.height = `${Math.floor(h * s)}px`;
+      }
     }
 
     function render() {
       const p = photos[i];
       const mine = state.user.isAdmin || p.uploadedBy === state.user.id;
       const ev = ctx.event;
-      const meta = [p.restricted && '🔒 Private', fmtLong(p.date), p.eventTitle && `${p.eventEmoji || '⭐'} ${p.eventTitle}`, `added by ${p.uploaderName || 'a former member'}`].filter(Boolean).join(' · ');
+      const meta = [p.restricted && '🔒 Private', fmtLong(p.date), p.eventTitle && `${p.eventEmoji || '⭐'} ${p.eventTitle}`].filter(Boolean).join(' · ');
+      const poster = p.uploaderName || 'a former member';
+      const longCaption = (p.caption || '').length > 90; // more than the polaroid's strip can show
       const isVideo = p.kind === 'video';
       const ready = !isVideo || p.status === 'ready';
       const media = !isVideo
@@ -1426,14 +1431,19 @@
         <div class="lb-stage">
           ${photos.length > 1 ? '<button class="lb-nav prev" aria-label="Previous">‹</button>' : ''}
           <figure class="lb-figure">
-            <div class="lb-media">${media}<span class="heart-pop" aria-hidden="true">♥</span></div>
+            <div class="lb-pol">
+              <span class="pin" aria-hidden="true"></span>
+              <div class="lb-media">${media}<span class="heart-pop" aria-hidden="true">♥</span></div>
+              <div class="lb-strip"><span class="lb-hand${p.caption ? '' : ' date'}">${esc(p.caption || fmt(p.date))}</span></div>
+            </div>
             <figcaption class="lb-under">
               <div class="lb-actions">
                 <button class="lb-act heart${p.liked ? ' on' : ''}" data-like aria-pressed="${!!p.liked}" aria-label="${p.liked ? 'Unlike' : 'Like'}">${p.liked ? '♥' : '♡'}</button>
                 <button class="lb-act" data-comments aria-expanded="${panelOpen}" aria-label="Comments">💬</button>
               </div>
+              <div class="lb-by">Posted by <b>${esc(poster)}</b> · ${esc(fmt(p.date))}</div>
               <div class="lb-liked">${likedLine(p)}</div>
-              ${p.caption ? `<div class="lb-caption">${esc(p.caption)}</div>` : ''}
+              ${longCaption ? `<div class="lb-caption"><b>${esc(poster)}</b> ${esc(p.caption)}</div>` : ''}
               <button class="lb-viewall" data-comments>${p.commentCount ? `View ${p.commentCount === 1 ? 'the comment' : `all ${p.commentCount} comments`}` : 'Add a comment…'}</button>
             </figcaption>
           </figure>

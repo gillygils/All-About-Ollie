@@ -654,3 +654,15 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .push-prefs { display: grid; gap: 8px; }
 .check { display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; }
 .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+/* ---------------------------------------------------------------- install the app (Android) */
+
+.install-bar {
+  position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 10px); z-index: 55; max-width: 480px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px; padding: 10px 8px 10px 10px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); animation: fade .2s;
+}
+.install-bar img { width: 42px; height: 42px; border-radius: 10px; flex: none; }
+.install-bar div { display: grid; min-width: 0; margin-right: auto; }
+.install-bar b { font-size: .95rem; }
+.install-bar span { font-size: .8rem; color: var(--muted); }

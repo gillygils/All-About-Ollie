@@ -205,6 +205,7 @@
     renderShell();
     route();
     startLive();
+    showInstallBar();
   }
 
   const gate = (inner, wide = false) => {
@@ -1974,6 +1975,65 @@
     wire('push-test', async () => { await api('/api/push/test', { method: 'POST' }); toast('Test sent — it should arrive in a few seconds'); });
   }
 
+  // ---------------------------------------------------------------- installing the app
+  // Chrome (on Android especially) can install the scrapbook like an app. It tells the page when
+  // that's possible; we hold on to it and offer our own Install button instead of Chrome's small hint.
+  // (iPhones don't allow this: there it's Share → Add to Home Screen.)
+  let installOffer = null;
+  const INSTALL_HIDDEN = 'sb_install_hidden';
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installOffer = e;
+    showInstallBar();
+    refreshAppCard();
+  });
+  window.addEventListener('appinstalled', () => {
+    installOffer = null;
+    $('#install-bar')?.remove();
+    refreshAppCard();
+    toast('Installed — the scrapbook is on your Home screen now');
+  });
+  async function installApp() {
+    const offer = installOffer;
+    if (!offer) return;
+    installOffer = null;
+    $('#install-bar')?.remove();
+    offer.prompt();
+    try { await offer.userChoice; } catch { /* closed */ }
+    refreshAppCard();
+  }
+  // A small "Get the app" bar for Android phones, until it's installed or waved away.
+  function showInstallBar() {
+    if (!installOffer || !state.user || $('#install-bar') || !/Android/i.test(navigator.userAgent)) return;
+    try { if (localStorage.getItem(INSTALL_HIDDEN)) return; } catch { /* private mode */ }
+    const bar = document.createElement('div');
+    bar.id = 'install-bar';
+    bar.className = 'install-bar';
+    bar.innerHTML = `<img src="/icon-192.png" alt="">
+      <div><b>Get the app</b><span>Add the scrapbook to your Home screen</span></div>
+      <button class="btn sm primary" type="button" data-install>Install</button>
+      <button class="btn icon ghost" type="button" data-hide aria-label="Not now">✕</button>`;
+    document.body.appendChild(bar);
+    $('[data-install]', bar).onclick = installApp;
+    $('[data-hide]', bar).onclick = () => {
+      bar.remove();
+      try { localStorage.setItem(INSTALL_HIDDEN, '1'); } catch { /* private mode */ }
+      toast('You can install it any time from Settings');
+    };
+  }
+  // Settings → App: install, or how to, for whichever phone or browser this is.
+  function refreshAppCard() {
+    const el = $('#app-install');
+    if (!el) return;
+    if (inHomeScreenApp()) el.innerHTML = '<p class="muted small">✓ You’re using the scrapbook app.</p>';
+    else if (installOffer) {
+      el.innerHTML = '<div class="row end"><button class="btn primary" type="button" id="app-install-btn">Install the app</button></div>';
+      $('#app-install-btn', el).onclick = installApp;
+    } else if (isIOS()) el.innerHTML = '<p class="muted small">In Safari, tap <b>Share</b> → <b>Add to Home Screen</b>.</p>';
+    else if (/Android/i.test(navigator.userAgent)) el.innerHTML = '<p class="muted small">In Chrome, tap <b>⋮</b> → <b>Install app</b> (or <b>Add to Home screen</b>).</p>';
+    else el.innerHTML = '<p class="muted small">On a phone, open the scrapbook in Chrome (Android) or Safari (iPhone) to add it to your Home screen.</p>';
+  }
+
   async function viewSettings(main) {
     const u = state.user;
     const site = state.site;
@@ -2012,6 +2072,11 @@
             <p class="error"></p>
             <div class="row end"><button class="btn primary" type="submit">Change password</button></div>
           </form>
+        </section>
+
+        <section class="card">
+          <h3>App</h3><p>Put the scrapbook on your phone’s Home screen, with its own icon, like any other app.</p>
+          <div id="app-install"></div>
         </section>
 
         <section class="card">
@@ -2082,6 +2147,7 @@
     });
 
     showPushDevice($('#push-device', main));
+    refreshAppCard();
     const savePref = (key) => async (e) => {
       try { state.user = await api('/api/me', { method: 'PATCH', body: { [key]: e.target.checked } }); toast('Saved'); } catch (err) { oops(err); }
     };

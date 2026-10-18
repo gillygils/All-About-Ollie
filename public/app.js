@@ -1011,7 +1011,7 @@
         animateZoom(L + 1, tx + scaleOf(f) * xOf(i));
       } else if (e.target.closest('[data-add]')) {
         openUpload({ date: g.start, eventId: g.events[0]?.id });
-      } else openDay(g.start);
+      } else openDay(g.start, g.byEvent.length > 1 ? eventOrder(g)[0] : null); // the event in front comes first
     });
     stage.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('.tl-stack, .spol')) e.target.click(); });
 
@@ -1158,10 +1158,11 @@
     ro.observe(stage);
   }
 
-  async function openDay(date) {
+  // `firstEvent`: list this event first (the one in front on the board, for a day with several).
+  async function openDay(date, firstEvent = null) {
     let photos;
     try { photos = await api(`/api/photos?date=${date}`); } catch (e) { return oops(e); }
-    const events = state.days.get(date)?.events || [];
+    const events = [...(state.days.get(date)?.events || [])].sort((a, b) => (b.id === firstEvent) - (a.id === firstEvent));
     const sub = [age(date), plural(events.length, 'event'), mediaCount(photos)].filter((s) => s && !s.startsWith('0 ')).join(' · ');
     // One section per event (with its own photos), then whatever else happened that day.
     const sections = events.map((e) => ({ event: e, photos: photos.filter((p) => p.eventId === e.id) }));

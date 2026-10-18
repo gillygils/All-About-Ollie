@@ -978,6 +978,26 @@ app.get('/api/events/:id', needUser, (req, res) => {
   res.json({ event: ev, photos: all(`${PHOTO_SELECT} WHERE p.event_id = $eid AND ${VISIBLE} ORDER BY p.id`, { eid: ev.id, uid: req.user.id }) });
 });
 
+// Puts photos that are already on the site into this event — say, one made after they were added.
+// They move to the event's day. Only photos the person may change (their own; any, for the admin).
+app.post('/api/events/:id/photos', needUser, (req, res) => {
+  const ev = get('SELECT id, date FROM events WHERE id = ?', id(req.params.id));
+  if (!ev) return fail(res, 'Event not found.', 404);
+  const ids = Array.isArray(req.body?.photoIds) ? req.body.photoIds.map(id).filter(Boolean).slice(0, 500) : [];
+  const moved = [];
+  tx(() => {
+    for (const pid of ids) {
+      const p = visiblePhoto(pid, req.user);
+      if (!p || !canEdit(req.user, p.uploaded_by) || p.event_id === ev.id) continue;
+      if (p.event_id) run('UPDATE events SET cover_photo_id = NULL WHERE cover_photo_id = ?', p.id); // was another event's cover
+      run('UPDATE photos SET event_id = ?, date = ? WHERE id = ?', ev.id, ev.date, p.id);
+      moved.push(p.id);
+    }
+  });
+  for (const pid of moved) broadcast({ type: 'photo', id: pid }, audience(pid));
+  res.json({ moved: moved.length });
+});
+
 function readEvent(b, current = {}) {
   const title = 'title' in b ? text(b.title, 80) : current.title;
   const date = 'date' in b ? b.date : current.date;

@@ -1428,7 +1428,7 @@
           <div class="row">
             ${ready ? `<a class="btn sm" href="/media/${isVideo ? 'video' : 'full'}/${p.id}?download=1">⬇ Download</a>` : ''}
             ${ev?.canEdit ? `<button class="btn sm" data-cover>${ev.coverId === p.id ? '★ Cover photo' : '☆ Make cover'}</button>` : ''}
-            ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
+            ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-event>📌 Event</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
             <button class="btn icon" data-x aria-label="Close">✕</button>
           </div>
         </div>
@@ -1530,6 +1530,8 @@
       };
       const access = $('[data-access]', lb);
       if (access) access.onclick = () => editAccess(p, () => { changed = true; render(); });
+      const evBtn = $('[data-event]', lb);
+      if (evBtn) evBtn.onclick = () => editEvent(p, () => { changed = true; render(); });
       const cap = $('[data-caption]', lb);
       if (cap) cap.onclick = () => editCaption(p, () => { changed = true; render(); });
       const del = $('[data-del]', lb);
@@ -1620,6 +1622,71 @@
     if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
     if (sec < 7 * 86400) return `${Math.floor(sec / 86400)}d`;
     return t.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: t.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  }
+
+  const canChange = (p) => state.user.isAdmin || p.uploadedBy === state.user.id;
+
+  // Tick photos from the event's day that aren't in an event yet, and pin them into it.
+  function addFromDay(ev, loose, done) {
+    const picked = new Set();
+    const m = modal(`
+      ${head(`Add to ${esc(ev.emoji || '⭐')} ${esc(ev.title)}`, esc(`Photos and videos from ${fmtLong(ev.date)} that aren’t in an event yet. Tap the ones that belong.`))}
+      <div class="mg-grid pick-grid">${loose.map((p) => `
+        <button class="mg-item" type="button" data-id="${p.id}" aria-pressed="false">
+          <img loading="lazy" src="/media/thumb/${p.id}" alt="${esc(p.caption || '')}">
+          <span class="mg-check" aria-hidden="true">✓</span>
+          ${p.kind === 'video' ? '<span class="mg-badge">▶</span>' : ''}
+        </button>`).join('')}</div>
+      <p class="error"></p>
+      <div class="row end"><button type="button" class="btn ghost" data-close>Cancel</button>
+        <button type="button" class="btn sm ghost" data-all>Select all</button>
+        <button type="button" class="btn primary" data-go disabled>Add to event</button></div>`, { cls: 'wide' });
+    const go = $('[data-go]', m.el);
+    const update = () => {
+      go.disabled = !picked.size;
+      go.textContent = picked.size ? `Add ${mediaCount(loose.filter((p) => picked.has(p.id)))} to event` : 'Add to event';
+    };
+    const set = (tile, on) => {
+      const pid = Number(tile.dataset.id);
+      if (on) picked.add(pid); else picked.delete(pid);
+      tile.classList.toggle('on', on);
+      tile.setAttribute('aria-pressed', on);
+    };
+    $$('.mg-item', m.el).forEach((t) => { t.onclick = () => { set(t, !t.classList.contains('on')); update(); }; });
+    $('[data-all]', m.el).onclick = () => { $$('.mg-item', m.el).forEach((t) => set(t, true)); update(); };
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const r = await api(`/api/events/${ev.id}/photos`, { method: 'POST', body: { photoIds: [...picked] } });
+        m.close();
+        toast(`Added ${mediaCount(loose.filter((p) => picked.has(p.id)))} to ${ev.title}`);
+        done();
+      } catch (e) { $('.error', m.el).textContent = e.message; go.disabled = false; }
+    };
+  }
+
+  // Put one photo in an event (or take it out). It moves to that event's day.
+  async function editEvent(photo, done) {
+    let events;
+    try { events = await api('/api/events'); } catch (e) { return oops(e); }
+    events.sort((x, y) => (x.date === y.date ? y.id - x.id : y.date.localeCompare(x.date))); // newest first
+    const m = modal(`
+      ${head('Which event?', 'Putting it in an event on another day moves it to that day.')}
+      <form class="form">
+        <div class="event-pick">
+          <label><input type="radio" name="eventId" value=""${photo.eventId ? '' : ' checked'}> <span>No event</span><em>${esc(fmt(photo.date))}</em></label>
+          ${events.map((e) => `<label><input type="radio" name="eventId" value="${e.id}"${e.id === photo.eventId ? ' checked' : ''}>
+            <span>${esc(e.emoji || '⭐')} ${esc(e.title)}</span><em>${esc(fmt(e.date))}${e.date !== photo.date ? ' · moves it' : ''}</em></label>`).join('')}
+        </div>
+        <p class="error"></p>
+        <div class="row end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>
+      </form>`, { z: 70 });
+    onSubmit($('form', m.el), async (f) => {
+      const updated = await api(`/api/photos/${photo.id}`, { method: 'PATCH', body: { eventId: f.eventId ? Number(f.eventId) : null } });
+      Object.assign(photo, updated);
+      m.close();
+      done();
+    });
   }
 
   function editCaption(photo, done) {
@@ -1892,6 +1959,7 @@
         </div>
         <div class="actions row">
           <button class="btn sm primary" data-act="add">＋ Add photos</button>
+          <button class="btn sm hidden" data-act="from-day">📌 From this day</button>
           ${ev.canEdit ? '<button class="btn sm" data-act="edit">✎ Edit</button><button class="btn sm danger" data-act="del">Delete</button>' : ''}
         </div>
       </div>
@@ -1901,6 +1969,14 @@
       </div>`;
     swipeBack($('.swipe-page', main), () => goBack('#/events')); // swipe right → back to the timeline or Events
     $('[data-act=add]', main).onclick = () => openUpload({ eventId: ev.id });
+    // photos already added to this day without an event (the event may have been made afterwards)
+    api(`/api/photos?date=${ev.date}`).then((dayPhotos) => {
+      const loose = dayPhotos.filter((p) => !p.eventId && canChange(p));
+      const btn = $('[data-act=from-day]', main);
+      if (!loose.length || !btn) return;
+      btn.classList.remove('hidden');
+      btn.onclick = () => addFromDay(ev, loose, () => route());
+    }).catch(() => { /* the button just stays hidden */ });
     $('[data-act=edit]', main)?.addEventListener('click', () => openEventForm(ev));
     $('[data-act=del]', main)?.addEventListener('click', async () => {
       if (!confirm(`Delete “${ev.title}”? Its photos will stay on the timeline, just without this event.`)) return;

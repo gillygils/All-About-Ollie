@@ -325,7 +325,10 @@
       else if (tab === 'settings') await viewSettings(main);
       else if (tab === 'manage') await viewManage(main);
       else if (tab === 'trace') await viewTrace(main);
-      else await viewTimeline(main, opts);
+      else if (tab === 'timeline' && /^\d{4}-\d\d-\d\d$/.test(id || '')) {
+        history.replaceState(null, '', '#/timeline'); // (from a notification) open the board at that day
+        await viewTimeline(main, { ...opts, focusDate: id });
+      } else await viewTimeline(main, opts);
     } catch (e) {
       if (!e.handled) main.innerHTML = `<div class="empty"><div class="big">😕</div><h3>Couldn’t load this page</h3><p>${esc(e.message)}</p></div>`;
     }
@@ -1911,6 +1914,66 @@
 
   // ---------------------------------------------------------------- settings
 
+  // ---------------------------------------------------------------- push notifications
+  // Each device signs up on its own (Settings → Notifications). On iPhone that only works in the
+  // Home Screen app, not in Safari itself. A small background worker (sw.js) shows them.
+  const canPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inHomeScreenApp = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* not available (e.g. plain http) */ });
+    // a notification tapped while the scrapbook is open: go where it points
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type === 'open') location.hash = new URL(e.data.url).hash || '#/timeline';
+    });
+  }
+  const b64ToBytes = (b64) => {
+    const raw = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  };
+  async function pushSubscription() {
+    if (!canPush()) return null;
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    return reg ? reg.pushManager.getSubscription() : null;
+  }
+  async function pushOn() {
+    if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications weren’t allowed. You can allow them in this browser’s or phone’s settings.');
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await api('/api/push/key');
+    const sub = (await reg.pushManager.getSubscription())
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    await api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+  }
+  async function pushOff() {
+    try {
+      const sub = await pushSubscription();
+      if (!sub) return;
+      await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe();
+    } catch { /* nothing to turn off */ }
+  }
+  // What this device can do, and a button to turn it on or off.
+  async function showPushDevice(el) {
+    if (!canPush()) {
+      el.innerHTML = isIOS() && !inHomeScreenApp()
+        ? 'On iPhone: tap <b>Share</b> → <b>Add to Home Screen</b>, then open the scrapbook from your Home Screen and turn notifications on there.'
+        : 'This browser can’t show notifications.';
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      el.textContent = 'Notifications are blocked for this site. Allow them in this browser’s or phone’s settings, then come back here.';
+      return;
+    }
+    const on = !!(await pushSubscription());
+    el.innerHTML = `<div class="row"><span>${on ? '🔔 On for this device' : '🔕 Off for this device'}</span>
+      ${on ? '<button class="btn sm ghost" id="push-test" type="button">Send a test</button><button class="btn sm" id="push-off" type="button">Turn off</button>'
+        : '<button class="btn sm primary" id="push-on" type="button">Turn on for this device</button>'}</div>`;
+    const wire = (id, fn) => { const b = $(`#${id}`, el); if (b) b.onclick = async () => { b.disabled = true; try { await fn(); } catch (e) { oops(e); } showPushDevice(el); }; };
+    wire('push-on', async () => { await pushOn(); toast('Notifications on for this device'); });
+    wire('push-off', async () => { await pushOff(); toast('Notifications off for this device'); });
+    wire('push-test', async () => { await api('/api/push/test', { method: 'POST' }); toast('Test sent — it should arrive in a few seconds'); });
+  }
+
   async function viewSettings(main) {
     const u = state.user;
     const site = state.site;
@@ -1949,6 +2012,15 @@
             <p class="error"></p>
             <div class="row end"><button class="btn primary" type="submit">Change password</button></div>
           </form>
+        </section>
+
+        <section class="card">
+          <h3>Notifications</h3><p>Get a notification on your phone or computer when something new is added.</p>
+          <div id="push-device" class="push-device muted small">Checking this device…</div>
+          <div class="push-prefs">
+            <label class="check"><input type="checkbox" id="np" ${u.notifyPhotos ? 'checked' : ''}> New photos and videos</label>
+            <label class="check"><input type="checkbox" id="nc" ${u.notifyComments ? 'checked' : ''}> Comments on photos I posted</label>
+          </div>
         </section>
 
         ${u.isAdmin ? `
@@ -1994,6 +2066,7 @@
       </div>`;
 
     $('#logout', main).onclick = async () => {
+      await pushOff(); // this device stops getting this account's notifications
       try { await api('/api/logout', { method: 'POST' }); } catch { /* already gone */ }
       state.tlScroll = null;
       boot();
@@ -2007,6 +2080,13 @@
         try { state.user = await api('/api/me', { method: 'PATCH', body: { theme } }); } catch (e) { oops(e); }
       };
     });
+
+    showPushDevice($('#push-device', main));
+    const savePref = (key) => async (e) => {
+      try { state.user = await api('/api/me', { method: 'PATCH', body: { [key]: e.target.checked } }); toast('Saved'); } catch (err) { oops(err); }
+    };
+    $('#np', main).onchange = savePref('notifyPhotos');
+    $('#nc', main).onchange = savePref('notifyComments');
 
     onSubmit($('#profile', main), async (f) => {
       state.user = await api('/api/me', { method: 'PATCH', body: f });

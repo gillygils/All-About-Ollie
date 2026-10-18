@@ -12,6 +12,7 @@ const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
 const fingerprint = require('./fingerprint');
+const webpush = require('web-push');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -113,6 +114,14 @@ db.exec(`
     photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
     sig BLOB NOT NULL
   );
+  -- phones and computers that asked for push notifications, one row per device
+  CREATE TABLE IF NOT EXISTS push_subs (
+    endpoint TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
   CREATE INDEX IF NOT EXISTS comments_photo ON comments(photo_id);
   CREATE INDEX IF NOT EXISTS photos_date ON photos(date);
   CREATE INDEX IF NOT EXISTS photos_event ON photos(event_id);
@@ -140,6 +149,13 @@ if (!photoColumns.includes('kind')) {
   db.exec(`ALTER TABLE photos ADD COLUMN kind TEXT NOT NULL DEFAULT 'photo';
            ALTER TABLE photos ADD COLUMN duration REAL;
            ALTER TABLE photos ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';`);
+}
+
+// Older databases predate notification settings (both on unless someone turns them off).
+const userColumns = all('PRAGMA table_info(users)').map((c) => c.name);
+if (!userColumns.includes('notify_photos')) {
+  db.exec(`ALTER TABLE users ADD COLUMN notify_photos INTEGER NOT NULL DEFAULT 1;
+           ALTER TABLE users ADD COLUMN notify_comments INTEGER NOT NULL DEFAULT 1;`);
 }
 
 // A private (restricted) photo is visible only to its uploader and the people on its access list.
@@ -245,7 +261,10 @@ function fail(res, message, status = 400, error = 'bad') {
   return res.status(status).json({ error, message });
 }
 function publicUser(u) {
-  return { id: u.id, username: u.username, displayName: u.display_name, email: u.email, isAdmin: !!u.is_admin, theme: u.theme };
+  return {
+    id: u.id, username: u.username, displayName: u.display_name, email: u.email, isAdmin: !!u.is_admin, theme: u.theme,
+    notifyPhotos: !!u.notify_photos, notifyComments: !!u.notify_comments,
+  };
 }
 const canEdit = (user, ownerId) => !!user.is_admin || (ownerId != null && ownerId === user.id);
 
@@ -677,6 +696,7 @@ app.post('/api/photos', needUser, upload.array('photos', 20), async (req, res) =
     }
   }
   if (saved.length) {
+    notifyPhotos(req.user, date, eventId, files.length - failed.length, saved, restricted ? new Set([req.user.id, ...allowed]) : null);
     broadcast({ type: 'photos', count: saved.length, date, eventId, by: req.user.display_name, from: req.user.id, tab: tabOf(req) },
       restricted ? new Set([req.user.id, ...allowed]) : null);
   }
@@ -755,6 +775,7 @@ app.post('/api/photos/:id/comments', needUser, (req, res) => {
   if (!body) return fail(res, 'Write something first.');
   const r = run('INSERT INTO comments(photo_id, user_id, body) VALUES(?, ?, ?)', photo.id, req.user.id, body);
   broadcast({ type: 'social', id: photo.id, from: req.user.id, tab: tabOf(req) }, audience(photo.id));
+  notifyComment(photo, req.user, body);
   res.json({ ...get(`${COMMENT_SELECT} WHERE c.id = ?`, Number(r.lastInsertRowid)), canDelete: true });
 });
 
@@ -1022,6 +1043,8 @@ app.patch('/api/me', needUser, (req, res) => {
   if (!validEmail(email)) return fail(res, 'That email doesn’t look right.');
   if (!THEMES.includes(theme)) return fail(res, 'Unknown theme.');
   run('UPDATE users SET display_name = ?, email = ?, theme = ? WHERE id = ?', displayName, email || null, theme, u.id);
+  if ('notifyPhotos' in b) run('UPDATE users SET notify_photos = ? WHERE id = ?', b.notifyPhotos ? 1 : 0, u.id);
+  if ('notifyComments' in b) run('UPDATE users SET notify_comments = ? WHERE id = ?', b.notifyComments ? 1 : 0, u.id);
   res.json(publicUser(get('SELECT * FROM users WHERE id = ?', u.id)));
 });
 
@@ -1128,6 +1151,125 @@ app.delete('/api/admin/users/:id', needAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------------------------------------------------------- push notifications
+
+// Notifications reach phones (on iPhone, from the Home Screen app) and computers through the
+// browser makers' push services. What's sent is encrypted for the device, so only it can read it.
+// The site's own key pair is made once and kept.
+if (!getSetting('vapid_public')) {
+  const k = webpush.generateVAPIDKeys();
+  setSetting('vapid_public', k.publicKey);
+  setSetting('vapid_private', k.privateKey);
+}
+// Push services want a way to reach whoever runs the site: the admin's email if there is one,
+// otherwise the site's own address (saved the first time a device signs up over HTTPS).
+function pushContact() {
+  const email = get('SELECT email FROM users WHERE is_admin = 1 AND email IS NOT NULL ORDER BY id LIMIT 1')?.email;
+  return email ? `mailto:${email}` : getSetting('site_origin') || 'mailto:scrapbook@example.com';
+}
+
+// Sends to every device of these people; devices that have gone away are forgotten.
+function sendPush(userIds, payload) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  const subs = all(`SELECT * FROM push_subs WHERE user_id IN (${ids.map(() => '?').join(',')})`, ...ids);
+  const vapidDetails = { subject: pushContact(), publicKey: getSetting('vapid_public'), privateKey: getSetting('vapid_private') };
+  for (const sub of subs) {
+    webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, JSON.stringify(payload), { TTL: 24 * 3600, vapidDetails })
+      .catch((err) => {
+        if (err.statusCode === 404 || err.statusCode === 410) run('DELETE FROM push_subs WHERE endpoint = ?', sub.endpoint);
+        else console.warn('Push failed:', err.statusCode || '', err.body || err.message);
+      });
+  }
+}
+
+const babyPossessive = () => { const n = siteInfo().babyName; return /s$/i.test(n) ? `${n}’` : `${n}’s`; };
+
+// New photos and videos: one notification per burst of uploads from the same person to the same
+// place (sent once they've paused for 20 seconds), to everyone who can see them except the poster.
+const photoBursts = new Map();
+function notifyPhotos(uploader, date, eventId, _count, ids, canSee) {
+  const key = `${uploader.id}:${eventId || date}:${canSee ? [...canSee].sort().join('.') : 'all'}`;
+  const burst = photoBursts.get(key) || { ids: [], first: Date.now() };
+  burst.ids.push(...ids);
+  clearTimeout(burst.timer);
+  const send = () => {
+    photoBursts.delete(key);
+    const kinds = all(`SELECT kind FROM photos WHERE id IN (${burst.ids.map(() => '?').join(',')})`, ...burst.ids).map((r) => r.kind);
+    if (!kinds.length) return; // deleted again already
+    const v = kinds.filter((k) => k === 'video').length;
+    const p = kinds.length - v;
+    const what = [p && (p === 1 ? 'a photo' : `${p} photos`), v && (v === 1 ? 'a video' : `${v} videos`)].filter(Boolean).join(' and ');
+    const ev = eventId ? get('SELECT title, emoji FROM events WHERE id = ?', eventId) : null;
+    const to = ev ? `${ev.emoji || '⭐'} ${ev.title}` : `${babyPossessive()} timeline`;
+    const people = all('SELECT id FROM users WHERE notify_photos = 1 AND id != ?', uploader.id)
+      .map((u) => u.id).filter((id) => !canSee || canSee.has(id));
+    sendPush(people, {
+      title: `${babyPossessive()} Scrapbook`,
+      body: `${uploader.display_name} added ${what} to ${to}`,
+      url: ev ? `/#/events/${eventId}` : `/#/timeline/${date}`,
+      tag: `photos-${key}`,
+    });
+  };
+  // wait for the uploads to pause, but never more than 2 minutes
+  burst.timer = setTimeout(send, Math.max(0, Math.min(20000, burst.first + 120000 - Date.now())));
+  photoBursts.set(key, burst);
+}
+
+// A comment: tell the person who posted the photo (not when they comment on their own).
+function notifyComment(photo, commenter, body) {
+  if (!photo.uploaded_by || photo.uploaded_by === commenter.id) return;
+  if (!get('SELECT 1 AS x FROM users WHERE id = ? AND notify_comments = 1', photo.uploaded_by)) return;
+  const short = body.length > 90 ? `${body.slice(0, 89)}…` : body;
+  sendPush([photo.uploaded_by], {
+    title: `${commenter.display_name} commented on your photo`,
+    body: `“${short}”`,
+    url: photo.event_id ? `/#/events/${photo.event_id}` : `/#/timeline/${photo.date}`,
+    tag: `comment-${photo.id}`,
+  });
+}
+
+app.get('/api/push/key', needUser, (req, res) => res.json({ key: getSetting('vapid_public') }));
+
+app.post('/api/push/subscribe', needUser, (req, res) => {
+  const sub = req.body?.subscription || {};
+  let ok = false;
+  try { ok = new URL(sub.endpoint).protocol === 'https:'; } catch { /* not a URL */ }
+  if (!ok || typeof sub.keys?.p256dh !== 'string' || typeof sub.keys?.auth !== 'string') return fail(res, 'That doesn’t look like a notification sign-up.');
+  run(`INSERT INTO push_subs(endpoint, user_id, p256dh, auth) VALUES(?, ?, ?, ?)
+       ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+  sub.endpoint, req.user.id, sub.keys.p256dh, sub.keys.auth);
+  if (req.protocol === 'https' && !getSetting('site_origin')) setSetting('site_origin', `https://${req.get('host')}`);
+  res.json({ ok: true });
+});
+
+app.post('/api/push/unsubscribe', needUser, (req, res) => {
+  run('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?', String(req.body?.endpoint || ''), req.user.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/push/test', needUser, (req, res) => {
+  sendPush([req.user.id], { title: `${babyPossessive()} Scrapbook`, body: 'Notifications are working 🎉', url: '/#/settings', tag: 'test' });
+  res.json({ devices: get('SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?', req.user.id).n });
+});
+
+// The Home Screen app's details (its name follows the baby's name).
+app.get('/manifest.webmanifest', (req, res) => {
+  res.type('application/manifest+json').set('Cache-Control', 'no-cache').send(JSON.stringify({
+    name: `${babyPossessive()} Scrapbook`,
+    short_name: `${babyPossessive()} Scrapbook`.length > 14 ? 'Scrapbook' : `${babyPossessive()} Scrapbook`,
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    background_color: '#f7f1e8',
+    theme_color: '#f7f1e8',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
+  }));
+});
+
 // ---------------------------------------------------------------- static app & errors
 
 // The page itself is always served fresh, with its script and stylesheet addresses stamped with the
@@ -1141,6 +1283,10 @@ app.get(['/', '/index.html'], (req, res) => {
     .replace('</head>', `  <meta name="build" content="${build}">\n</head>`);
   res.set('Cache-Control', 'no-cache');
   res.type('html').send(html);
+});
+app.get('/sw.js', (req, res) => {
+  res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
+  res.sendFile(path.join(PUBLIC, 'sw.js'));
 });
 app.use(express.static(PUBLIC, { index: false }));
 

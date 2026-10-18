@@ -645,3 +645,12 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tr-word { font-size: .8rem; color: var(--muted); text-align: right; }
 .tr-card h4 { margin: 8px 0 0; }
 .tr-views { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .9rem; }
+
+/* ---------------------------------------------------------------- notifications (settings) */
+
+.push-device { margin: 4px 0 10px; }
+.push-device .row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.push-device .row span { font-weight: 800; color: var(--text); margin-right: auto; }
+.push-prefs { display: grid; gap: 8px; }
+.check { display: flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; }
+.check input { width: 20px; height: 20px; accent-color: var(--accent); }

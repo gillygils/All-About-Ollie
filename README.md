@@ -39,6 +39,19 @@ Anyone with the site open sees changes without reloading: new photos and videos,
 - **How it works:** each open page holds one connection to `/api/live`. It only receives short "something changed" notices, then re-fetches through the normal permission-checked pages.
 - **Privacy:** notices about a private photo only go to the people who can see it.
 
+## Notifications
+
+Each person can get a notification on their phone or computer when:
+
+- someone adds photos or videos they can see ("Mom added 3 photos to Oliver's timeline"; a burst of uploads becomes one notification), or
+- someone comments on a photo they posted.
+
+Turn them on in **Settings → Notifications**, once on each device. Each person can switch either kind off for their account. Tapping a notification opens that day or event.
+
+- **iPhone (iOS 16.4 or newer):** notifications only work in the Home Screen app. In Safari, tap **Share → Add to Home Screen**, open the scrapbook from the new icon, enter the PIN and log in there, then turn notifications on. A shortcut added before this feature existed should be removed and added again.
+- **Android and computers:** turn them on right in the browser.
+- The site needs HTTPS (the Cloudflare tunnel provides it). The site makes its own notification keys on first start and keeps them in the database.
+
 ## Private photos
 
 When adding photos, choose **Only people I choose** and tick who may see them. To change it later, open the photo and tap the 🔒 / 👨‍👩‍👧 button.

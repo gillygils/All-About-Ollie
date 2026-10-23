@@ -649,7 +649,14 @@
     // Flipped (every other event day): stack and event name above the twine, badge on it, date below.
     // .flip-top is exactly as tall as the space above the twine and stacks its contents at the bottom,
     // so the badge lands on the line however long the event names are.
-    if (flip) return `<div class="flip-top">${stackBlock}${eventsBlock}</div>${marker}${label}${loose}`;
+    if (flip) {
+      // The space above the twine holds the stack and one line of event names; with more names, the
+      // stack is pinned up a little smaller (--fit) so everything still fits on the board.
+      const lines = Math.min(g.events.length, shownNames) + (g.events.length > shownNames ? 1 : 0);
+      const room = boardTwine - 17 - 30 - (21 * Math.max(1, lines) - 2); // above the badge, less the gaps and names
+      const fit = Math.min(1, room / 214).toFixed(3);
+      return `<div class="flip-top" style="--fit:${fit}">${stackBlock}${eventsBlock}</div>${marker}${label}${loose}`;
+    }
     return `${label}${marker}${eventsBlock}${stackBlock}${loose}`;
   }
 

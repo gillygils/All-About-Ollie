@@ -257,8 +257,10 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .stop.flip { padding-top: 0; }
 .flip-top { height: calc(var(--tw) - var(--badge-half, 17px)); display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 100%; }
 .flip-top .tl-stack { margin-top: 0; flex: none; }
+/* several event names: the stack shrinks (from the bottom, keeping its place by the names) to make room */
+.flip-top .tl-stack { transform: scale(var(--fit, 1)); transform-origin: 50% 100%; margin-top: calc((var(--fit, 1) - 1) * 214px); }
 /* the bottom polaroid hangs ~16px below the stack box, so leave room before the title */
-.flip-top .tl-events { min-height: 0; margin: 26px 0 4px; align-items: center; }
+.flip-top .tl-events { min-height: 0; margin: 26px 0 4px; align-items: center; flex: none; } /* names never squash */
 .stop.flip .tl-badge { margin: 0 0 6px; }
 .stop.flip .tl-label { margin-top: 2px; }
 

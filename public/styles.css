@@ -9,7 +9,7 @@
   --paper: #fff;
   /* cork board: the texture is multiplied by --cork (texture brightness ≈ 0.843, so tint = wanted colour / 0.843) */
   --cork: #ecb47f; --wood: #7a5536; --wood-2: #9a7049; --pin: #d9534f; --twine: #f1e6cf;
-  --polaroid: #fbf8f0; --polaroid-ink: #3b2f28;
+  --polaroid: #f6ebdb; --polaroid-ink: #3b2f28;
 }
 [data-theme="midnight"] {
   --bg: #15171c; --bg-2: #1c1f26; --surface: #20242c; --surface-2: #282d37;
@@ -30,7 +30,7 @@
   --shadow: 0 1px 2px rgba(20, 50, 80, .08), 0 8px 24px rgba(20, 50, 80, .08);
   --paper: #fff;
   --cork: #afc9da; --wood: #3f5566; --wood-2: #587386; --pin: #e07a5f; --twine: #eef3f7;
-  --polaroid: #fbf8f0; --polaroid-ink: #3b2f28;
+  --polaroid: #dbe8f3; --polaroid-ink: #3b2f28;
 }
 [data-theme="sage"] {
   --bg: #f1f4ec; --bg-2: #e6ecdf; --surface: #fcfdf9; --surface-2: #edf1e6;
@@ -40,7 +40,7 @@
   --shadow: 0 1px 2px rgba(40, 60, 30, .08), 0 8px 24px rgba(40, 60, 30, .08);
   --paper: #fff;
   --cork: #c8d2a4; --wood: #4f5a3e; --wood-2: #6a7754; --pin: #c96b4b; --twine: #f1f3ea;
-  --polaroid: #fbf8f0; --polaroid-ink: #3b2f28;
+  --polaroid: #e0e9d8; --polaroid-ink: #3b2f28;
 }
 [data-theme="blush"] {
   --bg: #fbf1f1; --bg-2: #f5e3e4; --surface: #fffafa; --surface-2: #f8eaeb;
@@ -50,7 +50,7 @@
   --shadow: 0 1px 2px rgba(90, 40, 50, .08), 0 8px 24px rgba(90, 40, 50, .08);
   --paper: #fff;
   --cork: #fbc0b9; --wood: #7d4f4c; --wood-2: #9c6a66; --pin: #6f8fb5; --twine: #fbf1f1;
-  --polaroid: #fbf8f0; --polaroid-ink: #3b2f28;
+  --polaroid: #f6dde3; --polaroid-ink: #3b2f28;
 }
 
 /* ---------------------------------------------------------------- base */

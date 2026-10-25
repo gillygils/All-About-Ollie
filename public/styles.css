@@ -242,9 +242,10 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-board .cork { padding: 26px 0 62px; overflow: hidden; }
 
 /* The stage is a window onto the timeline; the app moves and scales what's inside it itself.
-   touch-action: pan-y keeps normal vertical page scrolling and hands sideways swipes and pinches to us. */
+   touch-action: none hands every swipe and pinch on the board to the page's own code, which pans the
+   board — or, for a clearly up-and-down swipe, scrolls the page. */
 /* --tw is how far down the board the twine runs; the space above it is for photos pinned over the line */
-.stage { --tw: 280px; position: relative; height: calc(var(--tw) + 302px); overflow: hidden; touch-action: pan-y; cursor: grab; user-select: none; -webkit-user-select: none; }
+.stage { --tw: 280px; position: relative; height: calc(var(--tw) + 302px); overflow: hidden; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 .stage.dragging { cursor: grabbing; }
 .stage::before { content: ""; position: absolute; left: 0; right: 0; top: var(--tw); height: 3px; background: var(--twine); box-shadow: 0 2px 2px rgba(0, 0, 0, .35); }
 .layer { position: absolute; inset: 0; will-change: opacity; }

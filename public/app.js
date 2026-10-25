@@ -1128,7 +1128,7 @@
       if (n === 1) {
         const t = e.touches[0];
         pinch = null;
-        swipe = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, t: performance.now(), v: 0, moved: false };
+        swipe = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t: performance.now(), v: 0, moved: false, scroll: false };
       } else {
         if (swipe?.moved) stage.classList.remove('dragging');
         swipe = null;
@@ -1148,13 +1148,20 @@
       if (!swipe || e.touches.length !== 1) return;
       const t = e.touches[0];
       if (t.identifier !== swipe.id) return;
-      if (!swipe.moved) {
+      // Decide once per swipe. Only a clearly up-and-down swipe (steeper than about 60°) scrolls the
+      // page; anything else — including the slightly diagonal swipes thumbs make — moves the board.
+      // (The board handles both itself: left to the browser, a diagonal swipe became a page scroll,
+      // and on a page that barely scrolls the board just looked stuck.)
+      if (!swipe.moved && !swipe.scroll) {
         const dx = t.clientX - swipe.x0, dy = t.clientY - swipe.y0;
         if (Math.hypot(dx, dy) < 6) return;
-        if (Math.abs(dy) > Math.abs(dx)) { swipe = null; return; } // up/down: that's the page scrolling
-        swipe.moved = true; stage.classList.add('dragging'); liftPhoto(null);
+        if (Math.abs(dy) > Math.abs(dx) * 1.7) {
+          if (e.target.closest?.('.tl-stack.multi')) { swipe = null; return; } // that's cycling a day's events
+          swipe.scroll = true;
+        } else { swipe.moved = true; stage.classList.add('dragging'); liftPhoto(null); }
       }
       e.preventDefault();
+      if (swipe.scroll) { window.scrollBy(0, swipe.y - t.clientY); swipe.y = t.clientY; return; }
       const now = performance.now();
       const dx = t.clientX - swipe.x;
       swipe.v = 0.8 * (dx / Math.max(1, now - swipe.t)) + 0.2 * swipe.v;

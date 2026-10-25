@@ -678,3 +678,10 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .event-pick label:has(input:checked) { background: var(--accent-soft); }
 .event-pick span { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-pick em { font-style: normal; font-size: .8rem; color: var(--muted); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- moving loose photos (admins) */
+
+.stage img { -webkit-touch-callout: none; } /* a long press picks a photo up, not the phone's image menu */
+.spol.moving { transform: rotate(0) scale(1.18) !important; z-index: 40 !important; transition: transform .12s; cursor: grabbing;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .2), 10px 20px 30px rgba(0, 0, 0, .5); }
+.spol.moving.blocked { outline: 4px solid #e5484d; outline-offset: 2px; opacity: .8; } /* can't be dropped here */

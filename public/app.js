@@ -518,22 +518,36 @@
   // too crowded for that, its photos are pinned up a little smaller (`scale`) so they still fit.
   // None is ever left off.
   // `days[i]` is { g, stack } with stack 'A' (above the twine), 'B' (below) or null.
+  // ---- the rules every loose photo follows, placed automatically or moved by an admin.
+  // Coordinates are a day's own: x from its centre line, y as scatterSpot's (a photo's top).
+  const DAY_W = 250;   // days are this far apart; each day's area reaches halfway to the next
+  // What a loose photo may never cover around one day: its date card (and badge), its event
+  // names and its event stack. `d` is { g, stack } with stack 'A' (above the twine), 'B' or null.
+  function looseBlockers(d) {
+    if (!d) return [];
+    const tw = boardTwine;
+    const wide = d.g.byEvent.length > 1 ? 142 : 110;  // fanned-out stacks reach further
+    if (d.stack === 'A') return [[-62, 62, -80, 33], [-102, 102, -103, -78], [-wide, wide, -(tw + 62), -119]];
+    if (d.stack === 'B') return [[-62, 62, -155, -37], [-102, 102, -37, 12], [-wide, wide, 11, 240]];
+    return [[-62, 62, -155, -52]];
+  }
+  // ...for a day and both its neighbours, in that day's coordinates
+  const looseWalls = (days, i) => [...looseBlockers(days[i]),
+    ...looseBlockers(days[i - 1]).map((r) => [r[0] - DAY_W, r[1] - DAY_W, r[2], r[3]]),
+    ...looseBlockers(days[i + 1]).map((r) => [r[0] + DAY_W, r[1] + DAY_W, r[2], r[3]])];
+  // A photo is a box around (x, y + 62), 120 × 132 at full size (a little more than the polaroid,
+  // to allow for its tilt), shrunk by its scale.
+  const photoBox = (o) => [o.x - 60 * o.scale, o.x + 60 * o.scale, o.y + 62 - 66 * o.scale, o.y + 62 + 66 * o.scale];
+  const boxHits = (b, r) => b[1] > r[0] + 4 && b[0] < r[1] - 4 && b[3] > r[2] + 4 && b[2] < r[3] - 4;
+  // A photo may hang out of its own day's area by up to ¾ of its width — a quarter always stays in.
+  const inDayArea = (o) => Math.abs(o.x) <= DAY_W / 2 + 28 * o.scale; // 112px polaroid: half is 56, a quarter 28
+  const onBoard = (o) => { const b = photoBox(o); return b[2] >= -(boardTwine + 54) && b[3] <= 240; };
+  // Everything at once: can this photo go here?
+  const looseSpotOK = (o, walls) => inDayArea(o) && onBoard(o) && !walls.some((r) => boxHits(photoBox(o), r));
+
   function planLoose(days) {
-    const W = 250;
-    // what's in the way around one day, in its own coordinates (x from its centre; y as scatterSpot's)
-    const blockers = (d) => {
-      if (!d) return [];
-      const tw = boardTwine;
-      const wide = d.g.byEvent.length > 1 ? 142 : 110;  // fanned-out stacks reach further
-      if (d.stack === 'A') return [[-62, 62, -80, 33], [-102, 102, -103, -78], [-wide, wide, -(tw + 62), -119]];
-      if (d.stack === 'B') return [[-62, 62, -155, -37], [-102, 102, -37, 12], [-wide, wide, 11, 240]];
-      return [[-62, 62, -155, -52]];
-    };
-    // A photo is a box around (x, y + 62), 120 × 132 at full size (a little more than the polaroid,
-    // to allow for its tilt), shrunk by its scale.
-    const box = (o) => [o.x - 60 * o.scale, o.x + 60 * o.scale, o.y + 62 - 66 * o.scale, o.y + 62 + 66 * o.scale];
-    const hits = (b, r) => b[1] > r[0] + 4 && b[0] < r[1] - 4 && b[3] > r[2] + 4 && b[2] < r[3] - 4;
-    const top = -(boardTwine + 54), bottom = 240;         // the board's edges
+    const W = DAY_W;
+    const box = photoBox;
     // a photo's 6 × 6 sample points, for measuring how much of it still shows
     const pts = (o) => {
       const [x0, x1, y0, y1] = box(o);
@@ -547,12 +561,19 @@
       if (!d.g.loose?.length) { prev = []; return []; }
       const ring = d.stack === 'B', flip = d.stack === 'A';
       const block = { l: days[i - 1]?.stack, r: days[i + 1]?.stack };
-      const walls = [...blockers(d), ...blockers(days[i - 1]).map((r) => [r[0] - W, r[1] - W, r[2], r[3]]),
-        ...blockers(days[i + 1]).map((r) => [r[0] + W, r[1] + W, r[2], r[3]])];
+      const walls = looseWalls(days, i);
       const placed = prev.map((o) => ({ ...o, x: o.x - W })); // everything already down, bottom first
       const own = [];
+      // photos an admin moved stay exactly where they were put, and the rest keep clear of them
+      // (a saved spot that's now against the rules — say an event was added nearby — is placed automatically)
+      const fixed = new Map(d.g.loose.filter((p) => p.posX != null)
+        .map((p) => [p.id, { x: p.posX, y: p.posY, rot: ((p.id * 37) % 21) - 10, scale: 1, clear: 1 }])
+        .filter(([, o]) => looseSpotOK(o, walls)));
+      placed.push(...fixed.values());
+      own.push(...fixed.values());
       const dateY = flip ? -40 : -110;                     // where its date card sits (photo-top terms)
       const spots = d.g.loose.map((p, k) => {
+        if (fixed.has(p.id)) return fixed.get(p.id);
         // the still-visible sample points of each photo already down
         const shown = placed.map((o, n) => pts(o).filter((q) => !placed.slice(n + 1).some((u) => covers(u, q))));
         let best = null;
@@ -565,10 +586,8 @@
             else {
               const a = rnd() * 2 * Math.PI, r = 60 + t * 1.6;  // ever wider around the date
               c = { x: Math.cos(a) * r * 1.2, y: dateY + Math.sin(a) * r, rot: (rnd() - 0.5) * 26, scale };
-              if (Math.abs(c.x) > 210) continue;               // stay with its own date
             }
-            const b = box(c);
-            if (b[2] < top || b[3] > bottom || walls.some((r) => hits(b, r))) continue;
+            if (!looseSpotOK(c, walls)) continue;
             // the new photo goes on top: how much of the least visible photo underneath would still show?
             const clear = shown.reduce((m, left) => Math.min(m, left.filter((q) => !covers(c, q)).length / 36), 1);
             if (!best || clear > best.clear + 0.05) best = { ...c, clear }; // a smaller size has to be clearly better
@@ -576,7 +595,10 @@
           }
           if (best && best.clear >= 0.6) break;
         }
-        best = best || { ...scatterSpot(p.id, k, ring, flip, block), scale: 1, clear: 0 }; // nowhere free at all: its usual spot
+        if (!best) { // nowhere free at all: its usual spot, kept in its day's area
+          const c = scatterSpot(p.id, k, ring, flip, block);
+          best = { ...c, x: Math.max(-153, Math.min(153, c.x)), scale: 1, clear: 0 };
+        }
         placed.push(best);
         own.push(best);
         return best;
@@ -732,6 +754,7 @@
       return best;
     };
 
+    let boardDays = []; // the Days view's days ({ g, stack }), for the loose-photo rules
     const layers = groups.map((gs, l) => {
       const el = document.createElement('div');
       el.className = 'layer';
@@ -749,7 +772,8 @@
         if (l !== MAXL || !g.events.length || !hasStack) return null;
         return eventDays++ % 2 === 1 ? 'A' : 'B';       // where the day's event stack sits
       });
-      const looseAt = l === MAXL ? planLoose(gs.map((g, i) => ({ g, stack: stackAt[i] }))) : [];
+      if (l === MAXL) boardDays = gs.map((g, i) => ({ g, stack: stackAt[i] }));
+      const looseAt = l === MAXL ? planLoose(boardDays) : [];
       el.items = gs.map((g, i) => {
         const it = document.createElement('div');
         it.className = 'stop';
@@ -1080,9 +1104,74 @@
       if (focusDate && (focusDate < g.start || focusDate > g.end)) focusDate = null;
       stage.classList.remove('dragging');
     }
+    // Admins: press and hold a loose photo until it lifts, then drag it to a new spot on the board;
+    // letting go saves the spot for everyone. A quick swipe still moves the board as usual.
+    let moving = null;
+    let hold = null;
+    const canMove = () => state.user.isAdmin && L === MAXL && f === 0;
+    function armHold(spol, x, y) {
+      disarmHold();
+      if (!spol || !canMove()) return;
+      hold = { spol, x, y, timer: setTimeout(() => startMove(spol, x, y), 400) };
+    }
+    function disarmHold() { if (hold) clearTimeout(hold.timer); hold = null; }
+    const holdWandered = (x, y) => hold && Math.hypot(x - hold.x, y - hold.y) > 8;
+    function startMove(spol, x, y) {
+      hold = null;
+      swipe = null; drag = null;
+      stage.classList.remove('dragging');
+      liftPhoto(null);
+      const twin = spol.closest('.stop');
+      const scale = new DOMMatrix(getComputedStyle(twin).transform).a || 1;
+      moving = { el: spol, x0: x, y0: y, left0: parseFloat(spol.style.left), top0: parseFloat(spol.style.top), scale, moved: false,
+        walls: looseWalls(boardDays, +twin.dataset.i), blocked: false };
+      spol.classList.add('moving');
+      twin.classList.add('has-front'); // above the event stacks while it's being moved
+      navigator.vibrate?.(12);
+    }
+    function moveTo(x, y) {
+      const m = moving;
+      m.moved = true;
+      // a quarter of it stays in its own day's area, and all of it on the board
+      const px = Math.max(-153, Math.min(153, m.left0 + 56 + (x - m.x0) / m.scale));
+      const py = Math.max(-(boardTwine + 50), Math.min(112, m.top0 + (y - m.y0) / m.scale));
+      m.el.style.left = `${(px - 56).toFixed(1)}px`;
+      m.el.style.top = `${py.toFixed(1)}px`;
+      // over an event's stack, a date or event names: shown in red, and it won't stay there
+      m.blocked = !looseSpotOK({ x: px, y: py, scale: 1 }, m.walls);
+      m.el.classList.toggle('blocked', m.blocked);
+    }
+    async function endMove() {
+      const m = moving;
+      moving = null;
+      m.el.classList.remove('moving', 'blocked');
+      m.el.closest('.stop')?.classList.remove('has-front');
+      justDragged = true; setTimeout(() => { justDragged = false; }, 0); // no click (which would open it)
+      if (!m.moved) return;
+      if (m.blocked) {
+        m.el.style.left = `${m.left0}px`;
+        m.el.style.top = `${m.top0}px`;
+        toast('Loose photos can’t go over an event’s photos, a date or event names');
+        return;
+      }
+      const x = parseFloat(m.el.style.left) + 56;
+      const y = parseFloat(m.el.style.top);
+      try {
+        await api(`/api/photos/${m.el.dataset.photo}/spot`, { method: 'PUT', body: { x, y } });
+        toast('Photo moved');
+      } catch (e) {
+        oops(e);
+        m.el.style.left = `${m.left0}px`;
+        m.el.style.top = `${m.top0}px`;
+      }
+    }
+    // a long press shouldn't bring up the phone's "save image" menu
+    stage.addEventListener('contextmenu', (e) => { if (lastPointer === 'touch' || moving) e.preventDefault(); });
+
     stage.addEventListener('pointerdown', (e) => {
       lastPointer = e.pointerType; // 'touch' on phones, 'mouse' on computers
       if (e.pointerType === 'touch') return;
+      if (e.button === 0) armHold(e.target.closest('.spol'), e.clientX, e.clientY);
       if (e.isPrimary) pointers.clear();
       pointers.add(e.pointerId);
       if (pointers.size > 1) { drag = null; return; }
@@ -1090,6 +1179,10 @@
       drag = { x: e.clientX, t: performance.now(), v: 0, moved: false, id: e.pointerId };
     });
     stage.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'touch') {
+        if (moving) { moveTo(e.clientX, e.clientY); return; }
+        if (holdWandered(e.clientX, e.clientY)) disarmHold();
+      }
       if (!drag || e.pointerId !== drag.id || pointers.size > 1) return;
       const dx = e.clientX - drag.x;
       if (!drag.moved && Math.abs(dx) < 6) return;
@@ -1101,6 +1194,10 @@
     });
     const endPointer = (e) => {
       pointers.delete(e.pointerId);
+      if (e.pointerType !== 'touch') {
+        disarmHold();
+        if (moving) { endMove(); drag = null; return; }
+      }
       if (!drag || e.pointerId !== drag.id) return;
       if (drag.moved) endPan(drag.v, drag.t);
       drag = null;
@@ -1128,14 +1225,22 @@
       if (n === 1) {
         const t = e.touches[0];
         pinch = null;
+        armHold(e.target.closest?.('.spol'), t.clientX, t.clientY);
         swipe = { id: t.identifier, x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t: performance.now(), v: 0, moved: false, scroll: false };
       } else {
+        disarmHold();
         if (swipe?.moved) stage.classList.remove('dragging');
         swipe = null;
         pinch = n === 2 ? { d: dist(e.touches), m: mid(e.touches) } : null;
       }
     }, { passive: true });
     stage.addEventListener('touchmove', (e) => {
+      if (moving) {
+        e.preventDefault();
+        if (e.touches[0]) moveTo(e.touches[0].clientX, e.touches[0].clientY);
+        return;
+      }
+      if (e.touches[0] && holdWandered(e.touches[0].clientX, e.touches[0].clientY)) disarmHold(); // a swipe after all
       if (pinch && e.touches.length === 2) {
         e.preventDefault();
         const d = dist(e.touches);
@@ -1169,6 +1274,8 @@
       dragBy(dx);
     }, { passive: false });
     const touchDone = (e) => {
+      disarmHold();
+      if (moving) { if (!e.touches.length) endMove(); return; }
       if (pinch && e.touches.length < 2) { pinch = null; settle(); }
       if (swipe && ![...e.touches].some((t) => t.identifier === swipe.id)) {
         if (swipe.moved) {
@@ -1200,7 +1307,7 @@
     // A refresh rebuilds the board, which would leave a finger that's resting on it (or about to
     // swipe again) on a board that's gone. So wait while a finger is down, and 1.5 s after any touch.
     state.live.timelineBusy = () => stage.isConnected
-      && (fingersDown > 0 || performance.now() - lastTouched < 1500 || !!drag?.moved || !!swipe?.moved || !!pinch || anim !== 0);
+      && (fingersDown > 0 || performance.now() - lastTouched < 1500 || !!moving || !!hold || !!drag?.moved || !!swipe?.moved || !!pinch || anim !== 0);
 
     // Keep things lined up if the window is resized or the phone rotated.
     const ro = new ResizeObserver(() => { if (stage.isConnected) { tx = clampTx(tx); render(); } else ro.disconnect(); });
@@ -1473,7 +1580,7 @@
           <div class="row">
             ${ready ? `<a class="btn sm" data-download href="/media/${isVideo ? 'video' : 'full'}/${p.id}?download=1">⬇ Download</a>` : ''}
             ${ev?.canEdit ? `<button class="btn sm" data-cover>${ev.coverId === p.id ? '★ Cover photo' : '☆ Make cover'}</button>` : ''}
-            ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-event>📌 Event</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
+            ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button>${state.user.isAdmin && p.posX != null && !p.eventId ? '<button class="btn sm" data-spot>↺ Reset spot</button>' : ''}<button class="btn sm" data-event>📌 Event</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
             <button class="btn icon" data-x aria-label="Close">✕</button>
           </div>
         </div>
@@ -1589,6 +1696,16 @@
           try { await navigator.share({ files: [f] }); } catch { /* closed the sheet */ }
         };
       }
+      const spotBtn = $('[data-spot]', lb);
+      if (spotBtn) spotBtn.onclick = async () => {
+        try {
+          await api(`/api/photos/${p.id}/spot`, { method: 'PUT', body: { reset: true } });
+          p.posX = null; p.posY = null;
+          changed = true;
+          toast('Back to its automatic spot');
+          render();
+        } catch (e) { oops(e); }
+      };
       const evBtn = $('[data-event]', lb);
       if (evBtn) evBtn.onclick = () => editEvent(p, () => { changed = true; render(); });
       const cap = $('[data-caption]', lb);

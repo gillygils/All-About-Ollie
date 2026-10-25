@@ -151,6 +151,13 @@ if (!photoColumns.includes('kind')) {
            ALTER TABLE photos ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';`);
 }
 
+// A loose photo's spot on the board, when an admin has moved it there (x from its day's centre,
+// y down the board, in the board's own pixels). Empty = placed automatically.
+if (!all('PRAGMA table_info(photos)').some((c) => c.name === 'pos_x')) {
+  db.exec(`ALTER TABLE photos ADD COLUMN pos_x REAL;
+           ALTER TABLE photos ADD COLUMN pos_y REAL;`);
+}
+
 // Older databases predate notification settings (both on unless someone turns them off).
 const userColumns = all('PRAGMA table_info(users)').map((c) => c.name);
 if (!userColumns.includes('notify_photos')) {
@@ -476,7 +483,7 @@ app.post('/api/logout', (req, res) => {
 // ---------------------------------------------------------------- timeline & photos
 
 const PHOTO_SELECT = `
-  SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height, p.restricted,
+  SELECT p.id, p.date, p.event_id AS eventId, p.caption, p.width, p.height, p.restricted, p.pos_x AS posX, p.pos_y AS posY,
          p.kind, p.duration, p.status, p.uploaded_by AS uploadedBy, u.display_name AS uploaderName, p.created_at AS createdAt,
          e.title AS eventTitle, e.emoji AS eventEmoji,
          (SELECT COUNT(*) FROM comments c WHERE c.photo_id = p.id) AS commentCount,
@@ -501,11 +508,12 @@ app.get('/api/timeline', needUser, (req, res) => {
   //  previews       up to 3 of the day's photos (stacks when zoomed out)
   //  eventPreviews  up to 3 photos that belong to an event (the tidy stack on the Days view)
   //  loose          up to 7 photos with no event (scattered around the day on the Days view)
-  const rows = all(`SELECT p.id, p.date, p.kind, p.duration, p.caption, p.event_id AS eventId FROM photos p WHERE ${VISIBLE}
+  const rows = all(`SELECT p.id, p.date, p.kind, p.duration, p.caption, p.event_id AS eventId, p.pos_x AS posX, p.pos_y AS posY FROM photos p WHERE ${VISIBLE}
                     ORDER BY p.date, (p.kind = 'video') DESC, p.id`, { uid: req.user.id });
   for (const p of rows) {
     const d = day(p.date);
     const preview = { id: p.id, kind: p.kind, duration: p.duration, caption: p.caption };
+    if (p.posX != null && !p.eventId) Object.assign(preview, { posX: p.posX, posY: p.posY }); // moved there by an admin
     d.count++;
     if (p.kind === 'video') d.videoCount++; else d.photoCount++;
     if (d.previews.length < 3) d.previews.push(preview);
@@ -737,6 +745,7 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
   tx(() => {
     if (eventId !== photo.event_id) run('UPDATE events SET cover_photo_id = NULL WHERE cover_photo_id = ?', photo.id);
     run('UPDATE photos SET date = ?, event_id = ?, caption = ? WHERE id = ?', date, eventId, caption, photo.id);
+    if (date !== photo.date || eventId !== photo.event_id) run('UPDATE photos SET pos_x = NULL, pos_y = NULL WHERE id = ?', photo.id);
     if ('restricted' in b) {
       const restricted = !!b.restricted;
       setAccess(photo.id, restricted, restricted ? readAllowed(b.allowedUserIds, photo.uploaded_by) : []);
@@ -746,6 +755,24 @@ app.patch('/api/photos/:id', needUser, (req, res) => {
   const after = audience(photo.id);
   broadcast({ type: 'photo', id: photo.id }, before && after ? new Set([...before, ...after]) : null);
   res.json(get(`${PHOTO_SELECT} WHERE p.id = $id`, { id: photo.id, uid: req.user.id }));
+});
+
+// Admins can move a loose photo to a spot of their choosing on the board (or reset it to automatic).
+app.put('/api/photos/:id/spot', needAdmin, (req, res) => {
+  const photo = visiblePhoto(id(req.params.id), req.user);
+  if (!photo) return fail(res, 'Photo not found.', 404);
+  if (photo.event_id) return fail(res, 'Only photos that aren’t in an event can be moved around the board.');
+  const b = req.body || {};
+  if (b.reset) {
+    run('UPDATE photos SET pos_x = NULL, pos_y = NULL WHERE id = ?', photo.id);
+  } else {
+    if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) return fail(res, 'That spot isn’t valid.');
+    const x = Math.max(-153, Math.min(153, b.x)); // a quarter of the photo stays in its own day's area (125px each side)
+    const y = Math.max(-400, Math.min(200, b.y));
+    run('UPDATE photos SET pos_x = ?, pos_y = ? WHERE id = ?', x, y, photo.id);
+  }
+  broadcast({ type: 'photo', id: photo.id }, audience(photo.id));
+  res.json({ ok: true });
 });
 
 // ---- comments & hearts (only for people who can see the photo)
@@ -990,7 +1017,7 @@ app.post('/api/events/:id/photos', needUser, (req, res) => {
       const p = visiblePhoto(pid, req.user);
       if (!p || !canEdit(req.user, p.uploaded_by) || p.event_id === ev.id) continue;
       if (p.event_id) run('UPDATE events SET cover_photo_id = NULL WHERE cover_photo_id = ?', p.id); // was another event's cover
-      run('UPDATE photos SET event_id = ?, date = ? WHERE id = ?', ev.id, ev.date, p.id);
+      run('UPDATE photos SET event_id = ?, date = ?, pos_x = NULL, pos_y = NULL WHERE id = ?', ev.id, ev.date, p.id);
       moved.push(p.id);
     }
   });

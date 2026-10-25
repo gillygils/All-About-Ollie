@@ -376,15 +376,20 @@
   // connection opens, the server says which version is current; if we're behind — the site was
   // updated, or a home-screen shortcut woke up with old code — reload once it's safe.
   const PAGE_BUILD = document.querySelector('meta[name=build]')?.content || null;
-  function reloadWhenSafe() {
+  function reloadWhenSafe(build) {
+    // once per new version: if a reload didn't pick it up (a cached page), don't keep reloading
+    try {
+      if (sessionStorage.getItem('sb_reloaded_for') === build) return;
+    } catch { /* private mode */ }
     const busy = document.hidden || $('.lb') || $('.modal-back') || state.live.timelineBusy?.();
-    if (busy) { setTimeout(reloadWhenSafe, 2000); return; } // not mid-upload, mid-comment or mid-swipe
+    if (busy) { setTimeout(() => reloadWhenSafe(build), 2000); return; } // not mid-upload, mid-comment or mid-swipe
+    try { sessionStorage.setItem('sb_reloaded_for', build); } catch { /* private mode */ }
     location.reload();
   }
 
   function onLive(msg) {
     if (msg.type === 'hello') {
-      if (PAGE_BUILD && msg.build && msg.build !== PAGE_BUILD) reloadWhenSafe();
+      if (PAGE_BUILD && msg.build && msg.build !== PAGE_BUILD) reloadWhenSafe(msg.build);
       return;
     }
     const thisPage = msg.tab && msg.tab === TAB_ID; // made right here — already on screen
@@ -787,7 +792,21 @@
     let focusX = vw() / 2; // screen x the current zoom is centred on
     let focusDate = null;  // the day you were on, so zooming out and back in returns there
     const nearestIdx = (l, t, s, x) => Math.max(0, Math.min(groups[l].length - 1, Math.round((x - t) / (s * W))));
-    const save = () => { state.tl = { L, tx, focusDate }; };
+    // Where you are: kept in memory for this visit, and the level and day you're looking at are
+    // also remembered on this device, so the app reopens there.
+    const viewKey = `sb_view_${state.user.id}`;
+    let viewTimer = 0;
+    const save = () => {
+      state.tl = { L, tx, focusDate };
+      clearTimeout(viewTimer);
+      viewTimer = setTimeout(() => {
+        const lv = Math.min(MAXL, Math.max(0, Math.round(L + f)));
+        if (lv !== L) return; // mid-zoom: wait until it settles
+        const g = groups[L][nearestIdx(L, tx, scaleOf(f), vw() / 2)];
+        try { localStorage.setItem(viewKey, JSON.stringify({ L, date: g.start })); } catch { /* private mode */ }
+      }, 400);
+    };
+    const remembered = () => { try { return JSON.parse(localStorage.getItem(viewKey) || 'null'); } catch { return null; } };
 
     function makePair() {
       const a = nearestIdx(L, tx, scaleOf(f), focusX);
@@ -945,7 +964,12 @@
     const span = (toDate(data.days[data.days.length - 1].date) - toDate(data.days[0].date)) / 864e5;
     if (jumpDate) goToDate(jumpDate);
     else if (state.tl && state.tl.L <= MAXL) { L = state.tl.L; tx = state.tl.tx; focusDate = state.tl.focusDate; tx = clampTx(tx); render(); }
-    else {
+    else if (remembered()?.L >= 0 && remembered().L <= MAXL && remembered().date) {
+      const v = remembered();
+      L = v.L;
+      tx = clampTx(vw() / 2 - xOf(containing(L, v.date)));
+      render();
+    } else {
       L = span < 45 ? 3 : span < 200 ? 2 : 1;
       tx = Math.min(vw() / 2, vw() - 150 - xOf(groups[L].length - 1));
       render();
@@ -1093,6 +1117,10 @@
     let swipe = null;
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     const mid = (t) => localX((t[0].clientX + t[1].clientX) / 2);
+    let fingersDown = 0;
+    let lastTouched = -Infinity;
+    const touched = (e) => { fingersDown = e.touches ? e.touches.length : fingersDown; lastTouched = performance.now(); };
+    ['touchstart', 'touchmove', 'touchend', 'touchcancel', 'pointerdown', 'wheel'].forEach((t) => stage.addEventListener(t, touched, { passive: true }));
     stage.addEventListener('touchstart', (e) => {
       lastPointer = 'touch';
       stopAnim();
@@ -1162,7 +1190,10 @@
     stage.addEventListener('touchend', () => { stackSwipe = null; });
 
     // Live updates wait while you're swiping, pinching or mid-animation.
-    state.live.timelineBusy = () => stage.isConnected && (!!drag?.moved || !!swipe?.moved || !!pinch || anim !== 0);
+    // A refresh rebuilds the board, which would leave a finger that's resting on it (or about to
+    // swipe again) on a board that's gone. So wait while a finger is down, and 1.5 s after any touch.
+    state.live.timelineBusy = () => stage.isConnected
+      && (fingersDown > 0 || performance.now() - lastTouched < 1500 || !!drag?.moved || !!swipe?.moved || !!pinch || anim !== 0);
 
     // Keep things lined up if the window is resized or the phone rotated.
     const ro = new ResizeObserver(() => { if (stage.isConnected) { tx = clampTx(tx); render(); } else ro.disconnect(); });
@@ -1433,7 +1464,7 @@
         <div class="lb-top">
           <span class="count">${i + 1} / ${photos.length}</span>
           <div class="row">
-            ${ready ? `<a class="btn sm" href="/media/${isVideo ? 'video' : 'full'}/${p.id}?download=1">⬇ Download</a>` : ''}
+            ${ready ? `<a class="btn sm" data-download href="/media/${isVideo ? 'video' : 'full'}/${p.id}?download=1">⬇ Download</a>` : ''}
             ${ev?.canEdit ? `<button class="btn sm" data-cover>${ev.coverId === p.id ? '★ Cover photo' : '☆ Make cover'}</button>` : ''}
             ${mine ? `<button class="btn sm" data-access>${p.restricted ? '🔒 Private' : '👨‍👩‍👧 Everyone'}</button><button class="btn sm" data-event>📌 Event</button><button class="btn sm" data-caption>✎ Caption</button><button class="btn sm danger" data-del>Delete</button>` : ''}
             <button class="btn icon" data-x aria-label="Close">✕</button>
@@ -1537,6 +1568,20 @@
       };
       const access = $('[data-access]', lb);
       if (access) access.onclick = () => editAccess(p, () => { changed = true; render(); });
+      // On a phone, following the download link leaves the app (and coming back can restart it).
+      // Instead, hand the photo to the share sheet, which has "Save Image". It's fetched ahead, so
+      // the sheet can open straight from the tap (iPhones insist on that).
+      const dl = $('[data-download]', lb);
+      if (dl && !isVideo && matchMedia('(pointer: coarse)').matches && navigator.canShare) {
+        const file = fetch(`/media/full/${p.id}`).then((r) => r.blob())
+          .then((b) => new File([b], `photo-${p.id}.jpg`, { type: b.type || 'image/jpeg' })).catch(() => null);
+        dl.onclick = async (e) => {
+          const f = await Promise.race([file, new Promise((r) => setTimeout(() => r(null), 50))]);
+          if (!f || !navigator.canShare({ files: [f] })) return; // not ready or not supported: the link downloads as before
+          e.preventDefault();
+          try { await navigator.share({ files: [f] }); } catch { /* closed the sheet */ }
+        };
+      }
       const evBtn = $('[data-event]', lb);
       if (evBtn) evBtn.onclick = () => editEvent(p, () => { changed = true; render(); });
       const cap = $('[data-caption]', lb);

@@ -286,11 +286,11 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-badge span.active { transform: scale(1.25); filter: drop-shadow(0 0 3px var(--event)); }
 .tl-events a.active { background: rgba(255, 253, 246, .92); color: #3b2f28; text-shadow: none; border-radius: 6px; padding: 0 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
 .tl-label { position: relative; background: var(--date-bg); border-radius: 10px; padding: 5px 14px 6px; transform: rotate(-1.5deg); text-align: center; min-width: 116px; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
-.tl-label::before { content: ""; position: absolute; top: -6px; left: 50%; width: 34px; height: 12px; margin-left: -17px; background: rgba(255, 250, 230, .7); transform: rotate(3deg); }
+.tl-label::before { content: ""; position: absolute; top: -6px; left: 50%; width: 34px; height: 12px; margin-left: -17px; background: color-mix(in srgb, var(--date-bg), #ffffff 30%); opacity: .75; transform: rotate(3deg); } /* the tape: a lighter, see-through strip of the card colour */
 .tl-label b { display: block; font-family: "Fraunces", serif; font-size: 1.05rem; color: var(--date-ink); white-space: nowrap; }
 .tl-label span { font-size: .75rem; color: var(--date-muted); font-weight: 700; white-space: nowrap; }
-.tl-badge { display: flex; align-items: center; gap: 3px; background: #fffdf6; border: 2px solid var(--event); border-radius: 999px; padding: 4px 10px; margin: 12px 0 6px; font-size: 1.1rem; box-shadow: 0 2px 3px rgba(0, 0, 0, .3); position: relative; z-index: 2; }
-.tl-badge small { font-size: .7rem; font-weight: 800; color: #8a7a6d; }
+.tl-badge { display: flex; align-items: center; gap: 3px; background: var(--date-bg); border: 2px solid var(--event); border-radius: 999px; padding: 4px 10px; margin: 12px 0 6px; font-size: 1.1rem; box-shadow: 0 2px 3px rgba(0, 0, 0, .3); position: relative; z-index: 2; }
+.tl-badge small { font-size: .7rem; font-weight: 800; color: var(--date-muted); }
 .stop > .pin { margin: 19px 0 10px; }
 .tl-events { color: #fff; font-weight: 800; font-size: .85rem; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; min-height: 2.6em; max-width: 200px; }
 .tl-events a { color: inherit; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

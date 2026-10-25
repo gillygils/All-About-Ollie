@@ -10,6 +10,8 @@
   /* cork board: the texture is multiplied by --cork (texture brightness ≈ 0.843, so tint = wanted colour / 0.843) */
   --cork: #ecb47f; --wood: #7a5536; --wood-2: #9a7049; --pin: #d9534f; --twine: #f1e6cf;
   --polaroid: #f6ebdb; --polaroid-ink: #3b2f28;
+  /* the date cards pinned along the twine (every built-in theme uses these) */
+  --date-bg: #fffdf6; --date-ink: #3b2f28; --date-muted: #8a7a6d;
 }
 [data-theme="midnight"] {
   --bg: #15171c; --bg-2: #1c1f26; --surface: #20242c; --surface-2: #282d37;
@@ -283,10 +285,10 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .tl-badge span[data-ev] { display: inline-block; transition: transform .2s; }
 .tl-badge span.active { transform: scale(1.25); filter: drop-shadow(0 0 3px var(--event)); }
 .tl-events a.active { background: rgba(255, 253, 246, .92); color: #3b2f28; text-shadow: none; border-radius: 6px; padding: 0 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
-.tl-label { position: relative; background: #fffdf6; padding: 5px 14px 6px; transform: rotate(-1.5deg); text-align: center; min-width: 116px; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
+.tl-label { position: relative; background: var(--date-bg); border-radius: 10px; padding: 5px 14px 6px; transform: rotate(-1.5deg); text-align: center; min-width: 116px; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
 .tl-label::before { content: ""; position: absolute; top: -6px; left: 50%; width: 34px; height: 12px; margin-left: -17px; background: rgba(255, 250, 230, .7); transform: rotate(3deg); }
-.tl-label b { display: block; font-family: "Fraunces", serif; font-size: 1.05rem; color: #3b2f28; white-space: nowrap; }
-.tl-label span { font-size: .75rem; color: #8a7a6d; font-weight: 700; white-space: nowrap; }
+.tl-label b { display: block; font-family: "Fraunces", serif; font-size: 1.05rem; color: var(--date-ink); white-space: nowrap; }
+.tl-label span { font-size: .75rem; color: var(--date-muted); font-weight: 700; white-space: nowrap; }
 .tl-badge { display: flex; align-items: center; gap: 3px; background: #fffdf6; border: 2px solid var(--event); border-radius: 999px; padding: 4px 10px; margin: 12px 0 6px; font-size: 1.1rem; box-shadow: 0 2px 3px rgba(0, 0, 0, .3); position: relative; z-index: 2; }
 .tl-badge small { font-size: .7rem; font-weight: 800; color: #8a7a6d; }
 .stop > .pin { margin: 19px 0 10px; }
@@ -695,3 +697,40 @@ main.full { max-width: none; padding-left: 0; padding-right: 0; }
 .spol.moving { transform: rotate(0) scale(1.18) !important; z-index: 40 !important; transition: transform .12s; cursor: grabbing;
   box-shadow: 0 2px 4px rgba(0, 0, 0, .2), 10px 20px 30px rgba(0, 0, 0, .5); }
 .spol.moving.blocked { outline: 4px solid #e5484d; outline-offset: 2px; opacity: .8; } /* can't be dropped here */
+
+/* ---------------------------------------------------------------- make your own theme */
+
+.theme-swatch.custom { position: relative; }
+.theme-edit-btn { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(0, 0, 0, .08); color: inherit; font-size: .85rem; }
+.theme-edit-btn:hover { background: rgba(0, 0, 0, .16); }
+.theme-new { display: grid; place-items: center; align-content: center; gap: 2px; font-size: 1.6rem; line-height: 1; text-align: center;
+  border-style: dashed; background: transparent; color: var(--muted); --sw-bg: transparent; }
+.theme-new span { font-size: .8rem; }
+.theme-editor { display: grid; gap: 14px; }
+.te-preview { display: grid; gap: 10px; }
+.te-board { position: relative; height: 150px; border-radius: 12px; overflow: hidden; border: 6px solid var(--wood);
+  background-color: var(--cork); background-image: url(cork.jpg); background-blend-mode: multiply; background-size: 300px; }
+.te-twine { position: absolute; left: 0; right: 0; top: 74px; height: 3px; background: var(--twine); box-shadow: 0 1px 2px rgba(0, 0, 0, .3); }
+.te-pol { position: absolute; left: 18%; top: 14px; width: 84px; padding: 5px 5px 18px; background: var(--polaroid); transform: rotate(-5deg);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .15), 3px 6px 10px rgba(0, 0, 0, .38); }
+.te-pol.two { left: auto; right: 16%; top: 40px; transform: rotate(6deg); }
+.te-pol i { display: block; height: 62px; background: linear-gradient(135deg, var(--accent-soft), var(--event-soft) 60%, var(--accent)); }
+.te-pol b { position: absolute; left: 0; right: 0; bottom: 1px; text-align: center; font: 700 .95rem "Caveat", cursive; color: var(--polaroid-ink); }
+.te-pol > .pin { position: absolute; top: -6px; left: 50%; margin-left: -7px; width: 13px; height: 13px; z-index: 2; }
+.te-date { position: absolute; left: 50%; top: 88px; transform: translateX(-50%) rotate(-1.5deg); background: var(--date-bg); border-radius: 8px; padding: 3px 12px 4px; text-align: center; box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
+.te-date b { display: block; font-family: "Fraunces", serif; color: var(--date-ink); font-size: .9rem; }
+.te-date span { font-size: .65rem; color: var(--date-muted); font-weight: 700; }
+.te-ui { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.te-badge { background: var(--event-soft); color: var(--text); border: 2px solid var(--event); border-radius: 999px; padding: 3px 10px; font-weight: 800; font-size: .85rem; }
+.te-btn { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 6px 14px; font-weight: 800; font-size: .85rem; }
+.te-text { color: var(--text); font-weight: 700; font-size: .85rem; }
+.te-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 8px; }
+.te-pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; min-width: 0; }
+.te-pick input[type=color] { width: 42px; height: 42px; border: 0; padding: 0; border-radius: 10px; background: none; cursor: pointer; flex: none; }
+.te-pick input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+.te-pick input[type=color]::-webkit-color-swatch { border: 1px solid var(--line); border-radius: 10px; }
+.te-pick span { display: grid; min-width: 0; }
+.te-pick small { color: var(--muted); font-size: .75rem; }
+.te-random { justify-self: start; }
+.te-delete { margin-right: auto; }

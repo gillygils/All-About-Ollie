@@ -58,8 +58,78 @@
   }
 
   function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('sb_theme', theme); } catch { /* private mode */ }
+    const root = document.documentElement;
+    const custom = String(theme || '').startsWith('custom:') ? state.user?.customThemes?.find((t) => `custom:${t.id}` === theme) : null;
+    const vars = custom ? themeVars(custom.colors) : null;
+    paintThemeVars(vars);
+    root.dataset.theme = custom ? 'custom' : THEMES.some((t) => t.id === theme) ? theme : 'cream';
+    // remembered on this device so the next visit starts in the right colours (see index.html)
+    try {
+      localStorage.setItem('sb_theme', root.dataset.theme);
+      localStorage.setItem('sb_theme_vars', vars ? JSON.stringify(vars) : '');
+    } catch { /* private mode */ }
+  }
+
+  // ---- your own themes: six colours picked by a person; everything else is worked out from them,
+  // so text, borders and polaroid writing always stay easy to read.
+  const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const rgbHex = (c) => `#${c.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('')}`;
+  const mixHex = (a, b, t) => { const x = hexRgb(a), y = hexRgb(b); return rgbHex(x.map((v, i) => v + (y[i] - v) * t)); };
+  const lum = (h) => {
+    const [r, g, b] = hexRgb(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  // whichever of white or near-black text reads better on this colour
+  const inkOn = (bg) => ((1.05 / (lum(bg) + 0.05)) >= ((lum(bg) + 0.05) / 0.057) ? '#ffffff' : '#1b1309');
+  function themeVars(c) {
+    const dark = lum(c.bg) < 0.18;
+    const text = dark ? mixHex(c.bg, '#ffffff', 0.9) : mixHex(c.bg, '#000000', 0.8);
+    const shade = dark ? '0, 0, 0' : hexRgb(mixHex(c.accent, '#000000', 0.6)).join(', ');
+    return {
+      '--bg': c.bg, '--bg-2': mixHex(c.bg, text, 0.05),
+      '--surface': dark ? mixHex(c.bg, '#ffffff', 0.07) : mixHex(c.bg, '#ffffff', 0.7), '--surface-2': mixHex(c.bg, text, dark ? 0.1 : 0.045),
+      '--text': text, '--muted': mixHex(c.bg, text, 0.55), '--line': mixHex(c.bg, text, 0.14),
+      '--accent': c.accent, '--accent-ink': inkOn(c.accent), '--accent-soft': mixHex(c.bg, c.accent, dark ? 0.25 : 0.2),
+      '--event': c.event, '--event-soft': mixHex(c.bg, c.event, dark ? 0.2 : 0.17), '--danger': dark ? '#ef7b6c' : '#c0493b',
+      '--shadow': dark ? '0 1px 2px rgba(0, 0, 0, .3), 0 10px 28px rgba(0, 0, 0, .35)' : `0 1px 2px rgba(${shade}, .08), 0 8px 24px rgba(${shade}, .08)`,
+      '--paper': dark ? '#f5f1ea' : '#ffffff',
+      // the cork photo is grey and multiplied by --cork, which darkens it (≈ 0.843), so lighten to match the pick
+      '--cork': rgbHex(hexRgb(c.cork).map((v) => v / 0.843)), '--wood': mixHex(c.cork, '#000000', 0.6), '--wood-2': mixHex(c.cork, '#000000', 0.45),
+      '--pin': c.accent, '--twine': c.twine,
+      '--polaroid': c.polaroid, '--polaroid-ink': inkOn(c.polaroid) === '#ffffff' ? '#ffffff' : '#3b2f28',
+      '--date-bg': c.date || '#fffdf6', '--date-ink': c.dateInk || '#3b2f28', '--date-muted': mixHex(c.date || '#fffdf6', c.dateInk || '#3b2f28', 0.62),
+      'color-scheme': dark ? 'dark' : 'light',
+    };
+  }
+  const THEME_VAR_NAMES = Object.keys(themeVars({ bg: '#ffffff', accent: '#000000', event: '#000000', cork: '#888888', polaroid: '#ffffff', twine: '#ffffff', date: '#ffffff', dateInk: '#000000' }));
+  function paintThemeVars(vars) {
+    const root = document.documentElement;
+    THEME_VAR_NAMES.forEach((k) => root.style.removeProperty(k));
+    if (vars) Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
+  }
+  const isDarkTheme = () => getComputedStyle(document.documentElement).colorScheme.includes('dark');
+
+  // A random palette that hangs together: one base hue, the event colour from a related or opposite
+  // hue, soft backgrounds — and now and then a dark theme.
+  function hslHex(h, sat, l) {
+    h = ((h % 360) + 360) % 360; sat /= 100; l /= 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = sat * Math.min(l, 1 - l);
+    const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+    return rgbHex([f(0), f(8), f(4)].map((v) => v * 255));
+  }
+  function randomPalette() {
+    const r = (a, b) => a + Math.random() * (b - a);
+    const h = r(0, 360);
+    const eh = h + [r(150, 210), 120, -120, r(30, 50)][Math.floor(r(0, 4))]; // opposite, triadic or neighbouring
+    if (Math.random() < 0.2) {
+      return { bg: hslHex(h, r(12, 22), r(8, 12)), accent: hslHex(h, r(60, 80), r(62, 70)), event: hslHex(eh, r(35, 55), r(62, 72)),
+        cork: hslHex(h + r(-15, 15), r(12, 25), r(26, 34)), polaroid: hslHex(h, r(5, 10), r(22, 27)), twine: hslHex(h, r(8, 15), r(58, 66)),
+        date: hslHex(h, r(8, 14), r(17, 21)), dateInk: hslHex(h, r(20, 35), r(88, 93)) };
+    }
+    return { bg: hslHex(h, r(30, 50), r(95, 97)), accent: hslHex(h, r(50, 70), r(45, 55)), event: hslHex(eh, r(30, 50), r(45, 55)),
+      cork: hslHex(h + r(-20, 20), r(35, 60), r(68, 80)), polaroid: hslHex(h, r(35, 60), r(90, 94)), twine: hslHex(h, r(25, 40), r(93, 96)),
+      date: hslHex(h, r(40, 70), r(97, 99)), dateInk: hslHex(h, r(25, 45), r(16, 24)) };
   }
 
   // Dates are plain "YYYY-MM-DD" strings; build them in local time so nothing shifts a day.
@@ -159,7 +229,7 @@
   window.addEventListener('hashchange', () => { inAppSteps++; });
   const goBack = (fallback) => { if (inAppSteps > 0) history.back(); else location.hash = fallback; };
 
-  function modal(inner, { cls = '', z } = {}) {
+  function modal(inner, { cls = '', z, onClose } = {}) {
     const back = document.createElement('div');
     back.className = 'modal-back';
     if (z) back.style.zIndex = z;
@@ -172,7 +242,7 @@
       if ($('.lb') && !z) return; // let the photo viewer handle it
       close();
     };
-    function close() { back.remove(); document.removeEventListener('keydown', onKey); }
+    function close() { back.remove(); document.removeEventListener('keydown', onKey); onClose?.(); }
     document.addEventListener('keydown', onKey);
     back.addEventListener('mousedown', (e) => { if (e.target === back) close(); });
     $$('[data-close]', back).forEach((b) => { b.onclick = close; });
@@ -2103,7 +2173,7 @@
       }
       const picker = document.createElement('emoji-picker');
       picker.dataSource = '/vendor/emoji-data.json';
-      picker.classList.add(document.documentElement.dataset.theme === 'midnight' ? 'dark' : 'light');
+      picker.classList.add(isDarkTheme() ? 'dark' : 'light');
       picker.addEventListener('emoji-click', (ev) => {
         emoji = ev.detail.unicode;
         paintQuick();
@@ -2321,6 +2391,79 @@
     else el.innerHTML = '<p class="muted small">On a phone, open the scrapbook in Chrome (Android) or Safari (iPhone) to add it to your Home screen.</p>';
   }
 
+  // ---------------------------------------------------------------- make your own theme
+  const THEME_PICKS = [
+    ['bg', 'Background', 'Behind everything'],
+    ['accent', 'Highlight', 'Buttons, links and pins'],
+    ['event', 'Events', 'Event badges and names'],
+    ['cork', 'Cork board', 'Where the photos are pinned'],
+    ['polaroid', 'Polaroid frames', 'Around every photo'],
+    ['twine', 'Twine', 'The line the days hang on'],
+    ['date', 'Date cards', 'The cards with each day’s date'],
+    ['dateInk', 'Date writing', 'The date and age on those cards'],
+  ];
+  const cssHex = (v) => { v = v.trim(); return /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : /^#[0-9a-f]{3}$/i.test(v) ? `#${[...v.slice(1)].map((ch) => ch + ch).join('')}`.toLowerCase() : '#888888'; };
+  function currentPalette() {
+    const cs = getComputedStyle(document.documentElement);
+    const g = (n) => cssHex(cs.getPropertyValue(n));
+    return { bg: g('--bg'), accent: g('--accent'), event: g('--event'), cork: rgbHex(hexRgb(g('--cork')).map((v) => v * 0.843)), polaroid: g('--polaroid'), twine: g('--twine'),
+      date: g('--date-bg'), dateInk: g('--date-ink') };
+  }
+  // Edit (or make) a theme. The whole site shows it live while you pick; Cancel puts yours back.
+  function openThemeEditor(existing) {
+    let saved = false;
+    let picks = existing ? { date: '#fffdf6', dateInk: '#3b2f28', ...existing.colors } : currentPalette();
+    const m = modal(`
+      ${head(existing ? 'Edit theme' : 'Make your own theme', 'Pick a few colours, or roll the dice. Everything else is worked out so it all stays easy to read.')}
+      <form class="form theme-editor">
+        <label class="field">Name<input type="text" name="name" maxlength="30" required value="${esc(existing?.name || 'My theme')}"></label>
+        <div class="te-preview" aria-hidden="true">
+          <div class="te-board"><span class="te-twine"></span>
+            <div class="te-pol"><span class="pin"></span><i></i><b>tiny hands</b></div>
+            <div class="te-date"><b>Oct 15</b><span>Birth day</span></div>
+            <div class="te-pol two"><span class="pin"></span><i></i><b>first nap</b></div>
+          </div>
+          <div class="te-ui"><span class="te-badge">🎂 Birthday</span><span class="te-btn">＋ Add photos</span><span class="te-text">Text looks like this</span></div>
+        </div>
+        <div class="te-picks">${THEME_PICKS.map(([k, label, hint]) => `
+          <label class="te-pick"><input type="color" data-k="${k}" value="${picks[k]}"><span><b>${label}</b><small>${hint}</small></span></label>`).join('')}</div>
+        <button type="button" class="btn te-random" data-random>🎲 Random palette</button>
+        <p class="error"></p>
+        <div class="row end">${existing ? '<button type="button" class="btn danger te-delete" data-delete>Delete</button>' : ''}
+          <button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary" type="submit">Save theme</button></div>
+      </form>`, { cls: 'wide', onClose: () => { if (!saved) applyTheme(state.user.theme); } });
+    const show = () => {
+      paintThemeVars(themeVars(picks));
+      document.documentElement.dataset.theme = 'custom';
+      $$('input[type=color]', m.el).forEach((inp) => { inp.value = picks[inp.dataset.k]; });
+    };
+    $$('input[type=color]', m.el).forEach((inp) => { inp.addEventListener('input', () => { picks[inp.dataset.k] = inp.value; show(); }); });
+    $('[data-random]', m.el).onclick = () => { picks = randomPalette(); show(); };
+    show();
+    const store = async (themes, use) => {
+      state.user = await api('/api/me/themes', { method: 'PUT', body: { themes } });
+      if (use) state.user = await api('/api/me', { method: 'PATCH', body: { theme: use } });
+      saved = true;
+      m.close();
+      applyTheme(state.user.theme);
+      route();
+    };
+    onSubmit($('form', m.el), async (f) => {
+      const id = existing?.id || Math.random().toString(36).slice(2, 10);
+      const mine = { id, name: f.name, colors: picks };
+      const list = (state.user.customThemes || []).filter((t) => t.id !== id);
+      await store(existing ? (state.user.customThemes || []).map((t) => (t.id === id ? mine : t)) : [...list, mine], `custom:${id}`);
+      toast(existing ? 'Theme saved' : 'Theme saved and switched on');
+    });
+    $('[data-delete]', m.el)?.addEventListener('click', async () => {
+      if (!confirm(`Delete “${existing.name}”?`)) return;
+      try {
+        await store((state.user.customThemes || []).filter((t) => t.id !== existing.id), null);
+        toast('Theme deleted');
+      } catch (e) { oops(e); }
+    });
+  }
+
   async function viewSettings(main) {
     const u = state.user;
     const site = state.site;
@@ -2333,7 +2476,12 @@
           <div class="themes">${THEMES.map((t) => `
             <button class="theme-swatch${t.id === u.theme ? ' on' : ''}" data-theme-id="${t.id}" style="--sw-bg:${t.bg};--sw-text:${t.text}">
               <span class="dots">${t.dots.map((c) => `<i style="background:${c}"></i>`).join('')}</span>${t.name}
-            </button>`).join('')}</div>
+            </button>`).join('')}${(u.customThemes || []).map((t) => { const v = themeVars(t.colors); return `
+            <div class="theme-swatch custom${`custom:${t.id}` === u.theme ? ' on' : ''}" data-theme-id="custom:${t.id}" role="button" tabindex="0" style="--sw-bg:${v['--bg']};--sw-text:${v['--text']}">
+              <span class="dots">${[t.colors.accent, t.colors.event, t.colors.polaroid].map((c) => `<i style="background:${c}"></i>`).join('')}</span>${esc(t.name)}
+              <button type="button" class="theme-edit-btn" data-edit="${t.id}" aria-label="Edit ${esc(t.name)}">✎</button>
+            </div>`; }).join('')}
+            ${(u.customThemes || []).length < 8 ? '<button type="button" class="theme-swatch theme-new" data-new>＋<span>Make your own</span></button>' : ''}</div>
         </section>
 
         <section class="card">
@@ -2424,7 +2572,12 @@
       boot();
     };
 
-    $$('.theme-swatch', main).forEach((b) => {
+    $('[data-new]', main)?.addEventListener('click', () => openThemeEditor(null));
+    $$('[data-edit]', main).forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openThemeEditor(state.user.customThemes.find((t) => t.id === b.dataset.edit));
+    }));
+    $$('.theme-swatch[data-theme-id]', main).forEach((b) => {
       b.onclick = async () => {
         const theme = b.dataset.themeId;
         applyTheme(theme);

@@ -158,6 +158,11 @@ if (!all('PRAGMA table_info(photos)').some((c) => c.name === 'pos_x')) {
            ALTER TABLE photos ADD COLUMN pos_y REAL;`);
 }
 
+// Each person's own colour themes (JSON), made in Settings → Theme.
+if (!all('PRAGMA table_info(users)').some((c) => c.name === 'custom_themes')) {
+  db.exec("ALTER TABLE users ADD COLUMN custom_themes TEXT NOT NULL DEFAULT '[]'");
+}
+
 // Older databases predate notification settings (both on unless someone turns them off).
 const userColumns = all('PRAGMA table_info(users)').map((c) => c.name);
 if (!userColumns.includes('notify_photos')) {
@@ -267,10 +272,37 @@ const id = (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : nu
 function fail(res, message, status = 400, error = 'bad') {
   return res.status(status).json({ error, message });
 }
+// A custom theme is a name and eight colours; the page works out the rest from them. The date card
+// colours came later: a theme saved without them gets the usual white card with dark writing.
+const THEME_COLOURS = ['bg', 'accent', 'event', 'cork', 'polaroid', 'twine', 'date', 'dateInk'];
+const THEME_DEFAULTS = { date: '#fffdf6', dateInk: '#3b2f28' };
+const HEX = /^#[0-9a-f]{6}$/i;
+function cleanCustomThemes(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const t of list.slice(0, 8)) {
+    if (!t || typeof t.id !== 'string' || !/^[a-z0-9]{1,12}$/.test(t.id)) return null;
+    const colors = {};
+    for (const k of THEME_COLOURS) {
+      const col = t.colors?.[k] ?? THEME_DEFAULTS[k];
+      if (!HEX.test(col || '')) return null;
+      colors[k] = col.toLowerCase();
+    }
+    out.push({ id: t.id, name: text(t.name, 30) || 'My theme', colors });
+  }
+  return out;
+}
+function readCustomThemes(u) {
+  try { return cleanCustomThemes(JSON.parse(u.custom_themes || '[]')) || []; } catch { return []; }
+}
+const themeAllowed = (u, theme) => THEMES.includes(theme)
+  || (/^custom:[a-z0-9]{1,12}$/.test(theme) && readCustomThemes(u).some((t) => `custom:${t.id}` === theme));
+
 function publicUser(u) {
   return {
     id: u.id, username: u.username, displayName: u.display_name, email: u.email, isAdmin: !!u.is_admin, theme: u.theme,
     notifyPhotos: !!u.notify_photos, notifyComments: !!u.notify_comments,
+    customThemes: readCustomThemes(u),
   };
 }
 const canEdit = (user, ownerId) => !!user.is_admin || (ownerId != null && ownerId === user.id);
@@ -1088,10 +1120,21 @@ app.patch('/api/me', needUser, (req, res) => {
   const theme = 'theme' in b ? b.theme : u.theme;
   if (!displayName) return fail(res, 'Your name can’t be empty.');
   if (!validEmail(email)) return fail(res, 'That email doesn’t look right.');
-  if (!THEMES.includes(theme)) return fail(res, 'Unknown theme.');
+  if (!themeAllowed(u, theme)) return fail(res, 'Unknown theme.');
   run('UPDATE users SET display_name = ?, email = ?, theme = ? WHERE id = ?', displayName, email || null, theme, u.id);
   if ('notifyPhotos' in b) run('UPDATE users SET notify_photos = ? WHERE id = ?', b.notifyPhotos ? 1 : 0, u.id);
   if ('notifyComments' in b) run('UPDATE users SET notify_comments = ? WHERE id = ?', b.notifyComments ? 1 : 0, u.id);
+  res.json(publicUser(get('SELECT * FROM users WHERE id = ?', u.id)));
+});
+
+// Saves the whole list of this person's own themes (up to 8). If the one they're using was deleted,
+// they're switched back to Cream.
+app.put('/api/me/themes', needUser, (req, res) => {
+  const themes = cleanCustomThemes(req.body?.themes);
+  if (!themes) return fail(res, 'Those theme colours aren’t valid.');
+  run('UPDATE users SET custom_themes = ? WHERE id = ?', JSON.stringify(themes), req.user.id);
+  const u = get('SELECT * FROM users WHERE id = ?', req.user.id);
+  if (!themeAllowed(u, u.theme)) run("UPDATE users SET theme = 'cream' WHERE id = ?", u.id);
   res.json(publicUser(get('SELECT * FROM users WHERE id = ?', u.id)));
 });
 

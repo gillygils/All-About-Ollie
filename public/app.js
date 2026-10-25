@@ -95,14 +95,14 @@
       '--shadow': dark ? '0 1px 2px rgba(0, 0, 0, .3), 0 10px 28px rgba(0, 0, 0, .35)' : `0 1px 2px rgba(${shade}, .08), 0 8px 24px rgba(${shade}, .08)`,
       '--paper': dark ? '#f5f1ea' : '#ffffff',
       // the cork photo is grey and multiplied by --cork, which darkens it (≈ 0.843), so lighten to match the pick
-      '--cork': rgbHex(hexRgb(c.cork).map((v) => v / 0.843)), '--wood': mixHex(c.cork, '#000000', 0.6), '--wood-2': mixHex(c.cork, '#000000', 0.45),
+      '--cork': rgbHex(hexRgb(c.cork).map((v) => v / 0.843)), '--wood': c.frame || mixHex(c.cork, '#000000', 0.6), '--wood-2': c.frame ? mixHex(c.frame, '#ffffff', 0.2) : mixHex(c.cork, '#000000', 0.45),
       '--pin': c.accent, '--twine': c.twine,
       '--polaroid': c.polaroid, '--polaroid-ink': c.polaroidInk || autoPolaroidInk(c.polaroid),
       '--date-bg': c.date || '#fffdf6', '--date-ink': c.dateInk || '#3b2f28', '--date-muted': mixHex(c.date || '#fffdf6', c.dateInk || '#3b2f28', 0.62),
       'color-scheme': dark ? 'dark' : 'light',
     };
   }
-  const THEME_VAR_NAMES = Object.keys(themeVars({ bg: '#ffffff', accent: '#000000', event: '#000000', cork: '#888888', polaroid: '#ffffff', polaroidInk: '#000000', twine: '#ffffff', date: '#ffffff', dateInk: '#000000' }));
+  const THEME_VAR_NAMES = Object.keys(themeVars({ bg: '#ffffff', accent: '#000000', event: '#000000', cork: '#888888', frame: '#444444', polaroid: '#ffffff', polaroidInk: '#000000', twine: '#ffffff', date: '#ffffff', dateInk: '#000000' }));
   function paintThemeVars(vars) {
     const root = document.documentElement;
     THEME_VAR_NAMES.forEach((k) => root.style.removeProperty(k));
@@ -125,11 +125,11 @@
     const eh = h + [r(150, 210), 120, -120, r(30, 50)][Math.floor(r(0, 4))]; // opposite, triadic or neighbouring
     if (Math.random() < 0.2) {
       return { bg: hslHex(h, r(12, 22), r(8, 12)), accent: hslHex(h, r(60, 80), r(62, 70)), event: hslHex(eh, r(35, 55), r(62, 72)),
-        cork: hslHex(h + r(-15, 15), r(12, 25), r(26, 34)), polaroid: hslHex(h, r(5, 10), r(22, 27)), polaroidInk: hslHex(h, r(10, 25), r(90, 95)), twine: hslHex(h, r(8, 15), r(58, 66)),
+        cork: hslHex(h + r(-15, 15), r(12, 25), r(26, 34)), frame: hslHex(h + r(-15, 15), r(8, 18), r(10, 15)), polaroid: hslHex(h, r(5, 10), r(22, 27)), polaroidInk: hslHex(h, r(10, 25), r(90, 95)), twine: hslHex(h, r(8, 15), r(58, 66)),
         date: hslHex(h, r(8, 14), r(17, 21)), dateInk: hslHex(h, r(20, 35), r(88, 93)) };
     }
     return { bg: hslHex(h, r(30, 50), r(95, 97)), accent: hslHex(h, r(50, 70), r(45, 55)), event: hslHex(eh, r(30, 50), r(45, 55)),
-      cork: hslHex(h + r(-20, 20), r(35, 60), r(68, 80)), polaroid: hslHex(h, r(35, 60), r(90, 94)), polaroidInk: hslHex(h, r(25, 45), r(16, 24)), twine: hslHex(h, r(25, 40), r(93, 96)),
+      cork: hslHex(h + r(-20, 20), r(35, 60), r(68, 80)), frame: hslHex(h + r(-20, 20), r(25, 45), r(28, 40)), polaroid: hslHex(h, r(35, 60), r(90, 94)), polaroidInk: hslHex(h, r(25, 45), r(16, 24)), twine: hslHex(h, r(25, 40), r(93, 96)),
       date: hslHex(h, r(40, 70), r(97, 99)), dateInk: hslHex(h, r(25, 45), r(16, 24)) };
   }
 
@@ -2398,6 +2398,7 @@
     ['accent', 'Highlight', 'Buttons, links and pins'],
     ['event', 'Events', 'Event badges and names'],
     ['cork', 'Cork board', 'Where the photos are pinned'],
+    ['frame', 'Board frame', 'The wooden edge around the board'],
     ['polaroid', 'Polaroid frames', 'Around every photo'],
     ['polaroidInk', 'Polaroid writing', 'Captions and photo counts'],
     ['twine', 'Twine', 'The line the days hang on'],
@@ -2409,13 +2410,13 @@
     const cs = getComputedStyle(document.documentElement);
     const g = (n) => cssHex(cs.getPropertyValue(n));
     return { bg: g('--bg'), accent: g('--accent'), event: g('--event'), cork: rgbHex(hexRgb(g('--cork')).map((v) => v * 0.843)), polaroid: g('--polaroid'), twine: g('--twine'),
-      date: g('--date-bg'), dateInk: g('--date-ink'), polaroidInk: g('--polaroid-ink') };
+      date: g('--date-bg'), dateInk: g('--date-ink'), polaroidInk: g('--polaroid-ink'), frame: g('--wood') };
   }
   // Edit (or make) a theme. The whole site shows it live while you pick; Cancel puts yours back.
   function openThemeEditor(existing) {
     let saved = false;
     let picks = existing
-      ? { date: '#fffdf6', dateInk: '#3b2f28', polaroidInk: autoPolaroidInk(existing.colors.polaroid), ...existing.colors }
+      ? { date: '#fffdf6', dateInk: '#3b2f28', polaroidInk: autoPolaroidInk(existing.colors.polaroid), frame: mixHex(existing.colors.cork, '#000000', 0.6), ...existing.colors }
       : currentPalette();
     const m = modal(`
       ${head(existing ? 'Edit theme' : 'Make your own theme', 'Pick a few colours, or roll the dice. Everything else is worked out so it all stays easy to read.')}

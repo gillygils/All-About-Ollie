@@ -272,10 +272,11 @@ const id = (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : nu
 function fail(res, message, status = 400, error = 'bad') {
   return res.status(status).json({ error, message });
 }
-// A custom theme is a name and eight colours; the page works out the rest from them. The date card
-// colours came later: a theme saved without them gets the usual white card with dark writing.
-const THEME_COLOURS = ['bg', 'accent', 'event', 'cork', 'polaroid', 'twine', 'date', 'dateInk'];
-const THEME_DEFAULTS = { date: '#fffdf6', dateInk: '#3b2f28' };
+// A custom theme is a name and nine colours; the page works out the rest from them. Some came later:
+// a theme saved without the date card colours gets the usual white card with dark writing, and one
+// without a polaroid writing colour gets whichever reads best on its frames (worked out by the page).
+const THEME_COLOURS = ['bg', 'accent', 'event', 'cork', 'polaroid', 'polaroidInk', 'twine', 'date', 'dateInk'];
+const THEME_DEFAULTS = { date: '#fffdf6', dateInk: '#3b2f28', polaroidInk: null };
 const HEX = /^#[0-9a-f]{6}$/i;
 function cleanCustomThemes(list) {
   if (!Array.isArray(list)) return null;
@@ -285,6 +286,7 @@ function cleanCustomThemes(list) {
     const colors = {};
     for (const k of THEME_COLOURS) {
       const col = t.colors?.[k] ?? THEME_DEFAULTS[k];
+      if (col === null) continue; // optional, left to the page
       if (!HEX.test(col || '')) return null;
       colors[k] = col.toLowerCase();
     }

@@ -1033,7 +1033,7 @@ function readEvent(b, current = {}) {
   return {
     title,
     date,
-    emoji: 'emoji' in b ? text(b.emoji, 8) || null : current.emoji ?? null,
+    emoji: 'emoji' in b ? text(b.emoji, 32) || null : current.emoji ?? null, // (families and skin tones are several characters)
     description: 'description' in b ? text(b.description, 1000) || null : current.description ?? null,
   };
 }
@@ -1334,6 +1334,12 @@ app.get(['/', '/index.html'], (req, res) => {
 app.get('/sw.js', (req, res) => {
   res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
   res.sendFile(path.join(PUBLIC, 'sw.js'));
+});
+// The event emoji picker (with search) and its list of every emoji, served from here rather than a
+// third-party site, so opening it doesn't reach outside the scrapbook.
+app.use('/vendor/emoji-picker', express.static(path.join(__dirname, 'node_modules', 'emoji-picker-element'), { index: false }));
+app.get('/vendor/emoji-data.json', (req, res) => {
+  res.sendFile(path.join(__dirname, 'node_modules', 'emoji-picker-element-data', 'en', 'emojibase', 'data.json'));
 });
 app.use(express.static(PUBLIC, { index: false }));
 

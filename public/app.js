@@ -2066,17 +2066,52 @@
       <form class="form">
         <label class="field">Title<input type="text" name="title" maxlength="80" placeholder="First tooth" required value="${esc(existing?.title || '')}"></label>
         <label class="field">Date<input type="date" name="date" required value="${esc(existing?.date || todayISO())}"></label>
-        <div class="field">Icon<div class="emoji-pick">${EMOJI.map((e) => `<button type="button" data-e="${e}" class="${e === emoji ? 'on' : ''}">${e}</button>`).join('')}</div></div>
+        <div class="field">Icon
+          <div class="emoji-pick"></div>
+          <div class="emoji-full hidden"></div>
+        </div>
         <label class="field">Description <span class="hint">Optional</span><textarea name="description" maxlength="1000">${esc(existing?.description || '')}</textarea></label>
         <p class="error"></p>
         <div class="row end"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn primary" type="submit">${existing ? 'Save' : 'Create event'}</button></div>
       </form>`);
-    $('.emoji-pick', m.el).onclick = (e) => {
+    // The usual picks (plus the chosen one, if it's from the full set), then "More" for every emoji.
+    const quick = $('.emoji-pick', m.el);
+    const paintQuick = () => {
+      const list = emoji && !EMOJI.includes(emoji) ? [emoji, ...EMOJI] : EMOJI;
+      quick.innerHTML = list.map((e) => `<button type="button" data-e="${esc(e)}" class="${e === emoji ? 'on' : ''}" aria-label="${esc(e)}">${esc(e)}</button>`).join('')
+        + '<button type="button" class="emoji-more" aria-expanded="false">＋ More</button>';
+    };
+    paintQuick();
+    quick.onclick = (e) => {
+      if (e.target.closest('.emoji-more')) return toggleFull();
       const b = e.target.closest('[data-e]');
       if (!b) return;
       emoji = b.classList.contains('on') ? '' : b.dataset.e;
-      $$('.emoji-pick button', m.el).forEach((x) => x.classList.toggle('on', x.dataset.e === emoji));
+      paintQuick();
     };
+    const full = $('.emoji-full', m.el);
+    async function toggleFull() {
+      const open = full.classList.toggle('hidden') === false;
+      $('.emoji-more', quick)?.setAttribute('aria-expanded', open);
+      if (!open || full.firstChild) return;
+      full.innerHTML = '<p class="muted small">Loading every emoji…</p>';
+      try {
+        await import('/vendor/emoji-picker/index.js'); // the picker, loaded the first time it's needed
+      } catch {
+        full.innerHTML = '<p class="error">Couldn’t load the emoji picker. Try again in a moment.</p>';
+        return;
+      }
+      const picker = document.createElement('emoji-picker');
+      picker.dataSource = '/vendor/emoji-data.json';
+      picker.classList.add(document.documentElement.dataset.theme === 'midnight' ? 'dark' : 'light');
+      picker.addEventListener('emoji-click', (ev) => {
+        emoji = ev.detail.unicode;
+        paintQuick();
+        full.classList.add('hidden');
+        toast(`${emoji} chosen`);
+      });
+      full.replaceChildren(picker);
+    }
     onSubmit($('form', m.el), async (f) => {
       const body = { ...f, emoji };
       if (existing) {

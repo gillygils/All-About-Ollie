@@ -11,6 +11,8 @@
     "node": ">=22.13"
   },
   "dependencies": {
+    "emoji-picker-element": "1.29.1",
+    "emoji-picker-element-data": "1.8.0",
     "express": "^5.1.0",
     "multer": "^2.0.2",
     "sharp": "^0.34.3",

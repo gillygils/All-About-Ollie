@@ -39,6 +39,12 @@ Anyone with the site open sees changes without reloading: new photos and videos,
 - **How it works:** each open page holds one connection to `/api/live`. It only receives short "something changed" notices, then re-fetches through the normal permission-checked pages.
 - **Privacy:** notices about a private photo only go to the people who can see it.
 
+## What's new
+
+After an update, everyone sees a short "What's new" note once, the next time they open the scrapbook. It's remembered with their account, so it doesn't show again on another device. **Settings → ✨ What's new** shows it again any time.
+
+To announce something, add an entry at the top of `NEWS` in `public/app.js` with a new `id` (the date works well). Items marked `admin: true` are only shown to admins.
+
 ## Notifications
 
 Each person can get a notification on their phone or computer when:

@@ -158,6 +158,9 @@ if (!all('PRAGMA table_info(photos)').some((c) => c.name === 'pos_x')) {
            ALTER TABLE photos ADD COLUMN pos_y REAL;`);
 }
 
+// The newest "What's new" note each person has closed (so it shows once, on any device).
+if (!all('PRAGMA table_info(users)').some((c) => c.name === 'news_seen')) db.exec('ALTER TABLE users ADD COLUMN news_seen TEXT');
+
 // Each person's own colour themes (JSON), made in Settings → Theme.
 if (!all('PRAGMA table_info(users)').some((c) => c.name === 'custom_themes')) {
   db.exec("ALTER TABLE users ADD COLUMN custom_themes TEXT NOT NULL DEFAULT '[]'");
@@ -305,6 +308,7 @@ function publicUser(u) {
     id: u.id, username: u.username, displayName: u.display_name, email: u.email, isAdmin: !!u.is_admin, theme: u.theme,
     notifyPhotos: !!u.notify_photos, notifyComments: !!u.notify_comments,
     customThemes: readCustomThemes(u),
+    newsSeen: u.news_seen || null,
   };
 }
 const canEdit = (user, ownerId) => !!user.is_admin || (ownerId != null && ownerId === user.id);
@@ -1126,6 +1130,7 @@ app.patch('/api/me', needUser, (req, res) => {
   run('UPDATE users SET display_name = ?, email = ?, theme = ? WHERE id = ?', displayName, email || null, theme, u.id);
   if ('notifyPhotos' in b) run('UPDATE users SET notify_photos = ? WHERE id = ?', b.notifyPhotos ? 1 : 0, u.id);
   if ('notifyComments' in b) run('UPDATE users SET notify_comments = ? WHERE id = ?', b.notifyComments ? 1 : 0, u.id);
+  if ('newsSeen' in b) run('UPDATE users SET news_seen = ? WHERE id = ?', text(b.newsSeen, 20) || null, u.id);
   res.json(publicUser(get('SELECT * FROM users WHERE id = ?', u.id)));
 });
 

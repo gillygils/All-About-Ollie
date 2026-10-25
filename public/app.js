@@ -277,6 +277,49 @@
     route();
     startLive();
     showInstallBar();
+    setTimeout(() => showNews(), 900); // after the page has settled
+  }
+
+  // ---------------------------------------------------------------- what's new
+  // A short note shown once to each person after an update, newest first. To announce something,
+  // add an entry at the top with a new id (any short text, e.g. the date). `admin: true` items are
+  // only shown to admins.
+  const NEWS = [
+    {
+      id: '2026-10-26',
+      title: 'What’s new in the scrapbook',
+      items: [
+        { icon: '🎨', text: '<b>Make your own colours.</b> Settings → Theme → <b>＋</b>. Pick your colours or roll the dice for a random palette.' },
+        { icon: '🖼️', text: '<b>Photos open as polaroids</b>, and show who posted them.' },
+        { icon: '🔔', text: '<b>Notifications</b> when new photos are added or someone comments on yours. Turn them on in Settings → Notifications.' },
+        { icon: '📱', text: '<b>Add it to your phone</b> like an app: Settings → App shows how.' },
+        { icon: '😀', text: '<b>Every emoji for events</b>, with search: tap <b>＋ More</b> when making an event.' },
+        { icon: '📌', text: '<b>Add earlier photos to an event</b>: “From this day” on the event, or 📌 Event on a photo.' },
+        { icon: '🧭', text: '<b>Smoother timeline</b>: swiping is easier and it reopens where you left off.' },
+        { icon: '✋', text: '<b>Move loose photos</b>: press and hold one on the Days view, then drag it.', admin: true },
+      ],
+    },
+  ];
+  function showNews(force = false) {
+    const note = NEWS[0];
+    if (!note || !state.user) return;
+    if (!force && (state.user.newsSeen === note.id || $('.modal-back') || $('.lb'))) return;
+    const items = note.items.filter((it) => !it.admin || state.user.isAdmin);
+    const m = modal(`
+      <div class="news">
+        <span class="pin" aria-hidden="true"></span>
+        <div class="news-head"><span class="news-spark" aria-hidden="true">✨</span><h2>${esc(note.title)}</h2></div>
+        <ul>${items.map((it) => `<li><span class="news-icon" aria-hidden="true">${it.icon}</span><span>${it.text}</span></li>`).join('')}</ul>
+        <div class="row end"><button type="button" class="btn primary" data-close>Got it</button></div>
+      </div>`, {
+      cls: 'news-modal',
+      onClose: () => {
+        if (state.user.newsSeen === note.id) return;
+        state.user.newsSeen = note.id;
+        api('/api/me', { method: 'PATCH', body: { newsSeen: note.id } }).catch(() => { /* shown again next time */ });
+      },
+    });
+    return m;
   }
 
   const gate = (inner, wide = false) => {
@@ -2474,7 +2517,7 @@
     const site = state.site;
     main.innerHTML = `
       <div class="page-head"><div><h2>Settings</h2><p>Signed in as <strong>${esc(u.username)}</strong>${u.isAdmin ? ' <span class="pill">Admin</span>' : ''}</p></div>
-        <button class="btn" id="logout">Log out</button></div>
+        <div class="row"><button class="btn" id="whats-new" type="button">✨ What’s new</button><button class="btn" id="logout">Log out</button></div></div>
       <div class="settings">
         <section class="card">
           <h3>Theme</h3><p>Pick the look you like. It follows your account to any device.</p>
@@ -2570,6 +2613,7 @@
         </section>` : ''}
       </div>`;
 
+    $('#whats-new', main).onclick = () => showNews(true);
     $('#logout', main).onclick = async () => {
       await pushOff(); // this device stops getting this account's notifications
       try { await api('/api/logout', { method: 'POST' }); } catch { /* already gone */ }
